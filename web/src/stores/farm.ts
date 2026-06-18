@@ -58,5 +58,14 @@ export const useFarmStore = defineStore('farm', () => {
     await fetchLands(accountId)
   }
 
-  return { lands, summary, seeds, loading, fetchLands, fetchSeeds, operate }
+  async function operateLand(accountId: string, landId: number, opType: string) {
+    if (!accountId || !landId)
+      return
+    await api.post(`/api/farm/land/${landId}/op`, { opType }, {
+      headers: { 'x-account-id': accountId },
+    })
+    await fetchLands(accountId)
+  }
+
+  return { lands, summary, seeds, loading, fetchLands, fetchSeeds, operate, operateLand }
 })

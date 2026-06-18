@@ -178,10 +178,12 @@ const DEFAULT_ACCOUNT_CONFIG = {
     ],
     // 好友作物成熟后延迟多少秒再偷取（0=不延迟）
     stealDelaySeconds: 1,
+    harvestDelaySeconds: 1,
     // 自己农田种植时是否随机地块顺序
     plantOrderRandom: true,
     // 自己农田种植时每块地间隔秒数（0=使用默认50ms）
     plantDelaySeconds: 2,
+    fertilizerDelaySeconds: 2,
     // 有机化肥购买数量
     fertilizerBuyOrganicCount: 1,
     // 有机化肥自动购买触发阈值（小时）
@@ -327,8 +329,10 @@ function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
         preferredSeedId: Math.max(0, Number.parseInt(base.preferredSeedId, 10) || 0),
         plantBlacklist: rawPlantBlacklist.map(Number).filter(n => Number.isFinite(n) && n > 0),
         stealDelaySeconds: Math.max(0, Math.min(300, Number(base.stealDelaySeconds) || 0)),
+        harvestDelaySeconds: Math.max(0, Math.min(300, Number(base.harvestDelaySeconds) || 0)),
         plantOrderRandom: !!(base.plantOrderRandom),
         plantDelaySeconds: Math.max(0, Math.min(60, Number(base.plantDelaySeconds) || 0)),
+        fertilizerDelaySeconds: Math.max(0, Math.min(60, Number(base.fertilizerDelaySeconds) || 0)),
         fertilizerBuyOrganicCount: Math.max(0, Math.min(10000, Number(base.fertilizerBuyOrganicCount) || 0)),
         fertilizerBuyOrganicThresholdHours: Math.max(0, Math.min(990, Number(base.fertilizerBuyOrganicThresholdHours) || 0)),
         fertilizerBuyNormalCount: Math.max(0, Math.min(10000, Number(base.fertilizerBuyNormalCount) || 0)),
@@ -425,6 +429,10 @@ function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
         cfg.stealDelaySeconds = Math.max(0, Math.min(300, Number.parseInt(src.stealDelaySeconds, 10) || 0));
     }
 
+    if (src.harvestDelaySeconds !== undefined && src.harvestDelaySeconds !== null) {
+        cfg.harvestDelaySeconds = Math.max(0, Math.min(300, Number.parseInt(src.harvestDelaySeconds, 10) || 0));
+    }
+
     // 种植顺序随机
     if (src.plantOrderRandom !== undefined && src.plantOrderRandom !== null) {
         cfg.plantOrderRandom = !!src.plantOrderRandom;
@@ -433,6 +441,10 @@ function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
     // 种植延迟
     if (src.plantDelaySeconds !== undefined && src.plantDelaySeconds !== null) {
         cfg.plantDelaySeconds = Math.max(0, Math.min(60, Number(src.plantDelaySeconds) || 0));
+    }
+
+    if (src.fertilizerDelaySeconds !== undefined && src.fertilizerDelaySeconds !== null) {
+        cfg.fertilizerDelaySeconds = Math.max(0, Math.min(60, Number(src.fertilizerDelaySeconds) || 0));
     }
 
     // 有机化肥购买数量
@@ -686,8 +698,10 @@ function getConfigSnapshot(accountId) {
         friendBlacklist: [...(cfg.friendBlacklist || [])],
         plantBlacklist: [...(cfg.plantBlacklist || [])],
         stealDelaySeconds: Math.max(0, Math.min(300, Number(cfg.stealDelaySeconds) || 0)),
+        harvestDelaySeconds: Math.max(0, Math.min(300, Number(cfg.harvestDelaySeconds) || 0)),
         plantOrderRandom: !!cfg.plantOrderRandom,
         plantDelaySeconds: Math.max(0, Math.min(60, Number(cfg.plantDelaySeconds) || 0)),
+        fertilizerDelaySeconds: Math.max(0, Math.min(60, Number(cfg.fertilizerDelaySeconds) || 0)),
         fertilizerBuyOrganicCount: Math.max(0, Math.min(10000, Number(cfg.fertilizerBuyOrganicCount) || 0)),
         fertilizerBuyOrganicThresholdHours: Math.max(0, Math.min(990, Number(cfg.fertilizerBuyOrganicThresholdHours) || 0)),
         fertilizerBuyNormalCount: Math.max(0, Math.min(10000, Number(cfg.fertilizerBuyNormalCount) || 0)),
@@ -782,6 +796,10 @@ function applyConfigSnapshot(snapshot, options = {}) {
         next.stealDelaySeconds = Math.max(0, Math.min(300, Number(cfg.stealDelaySeconds) || 0));
     }
 
+    if (cfg.harvestDelaySeconds !== undefined && cfg.harvestDelaySeconds !== null) {
+        next.harvestDelaySeconds = Math.max(0, Math.min(300, Number(cfg.harvestDelaySeconds) || 0));
+    }
+
     // 种植顺序随机
     if (cfg.plantOrderRandom !== undefined && cfg.plantOrderRandom !== null) {
         next.plantOrderRandom = !!cfg.plantOrderRandom;
@@ -790,6 +808,10 @@ function applyConfigSnapshot(snapshot, options = {}) {
     // 种植延迟
     if (cfg.plantDelaySeconds !== undefined && cfg.plantDelaySeconds !== null) {
         next.plantDelaySeconds = Math.max(0, Math.min(60, Number(cfg.plantDelaySeconds) || 0));
+    }
+
+    if (cfg.fertilizerDelaySeconds !== undefined && cfg.fertilizerDelaySeconds !== null) {
+        next.fertilizerDelaySeconds = Math.max(0, Math.min(60, Number(cfg.fertilizerDelaySeconds) || 0));
     }
 
     // 有机化肥购买数量
@@ -998,6 +1020,10 @@ function getStealDelaySeconds(accountId) {
     return Math.max(0, Math.min(300, Number(getAccountConfigSnapshot(accountId).stealDelaySeconds) || 0));
 }
 
+function getHarvestDelaySeconds(accountId) {
+    return Math.max(0, Math.min(300, Number(getAccountConfigSnapshot(accountId).harvestDelaySeconds) || 0));
+}
+
 // ============ 种植顺序随机 ============
 function getPlantOrderRandom(accountId) {
     return !!getAccountConfigSnapshot(accountId).plantOrderRandom;
@@ -1006,6 +1032,10 @@ function getPlantOrderRandom(accountId) {
 // ============ 种植延迟 ============
 function getPlantDelaySeconds(accountId) {
     return Math.max(0, Math.min(60, Number(getAccountConfigSnapshot(accountId).plantDelaySeconds) || 0));
+}
+
+function getFertilizerDelaySeconds(accountId) {
+    return Math.max(0, Math.min(60, Number(getAccountConfigSnapshot(accountId).fertilizerDelaySeconds) || 0));
 }
 
 // ============ 有机化肥购买数量 ============
@@ -1312,8 +1342,10 @@ module.exports = {
     setFriendBlacklist,
     addFriendToBlacklist,
     getStealDelaySeconds,
+    getHarvestDelaySeconds,
     getPlantOrderRandom,
     getPlantDelaySeconds,
+    getFertilizerDelaySeconds,
     getFertilizerBuyOrganicCount,
     getFertilizerBuyOrganicThresholdHours,
     getFertilizerBuyNormalCount,

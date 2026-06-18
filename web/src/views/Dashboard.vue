@@ -291,6 +291,7 @@ const OP_META: Record<string, { label: string, icon: string, color: string }> = 
   bug: { label: '除虫', icon: 'i-carbon-warning-alt', color: 'text-red-400' },
   fertilize: { label: '施肥', icon: 'i-carbon-chemistry', color: 'text-emerald-500' },
   plant: { label: '种植', icon: 'i-carbon-tree', color: 'text-lime-500' },
+  remove: { label: '铲除', icon: 'i-carbon-trash-can', color: 'text-red-500' },
   steal: { label: '偷菜', icon: 'i-carbon-run', color: 'text-orange-500' },
   helpWater: { label: '帮浇水', icon: 'i-carbon-rain-drop', color: 'text-blue-300' },
   helpWeed: { label: '帮除草', icon: 'i-carbon-cut-out', color: 'text-yellow-400' },

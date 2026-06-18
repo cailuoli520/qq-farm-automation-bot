@@ -49,6 +49,7 @@ const operations = {
     bug: 0,
     fertilize: 0,
     plant: 0,
+    remove: 0,
     steal: 0,
     helpWater: 0,
     helpWeed: 0,

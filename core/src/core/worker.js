@@ -8,7 +8,7 @@ const { getLevelExpProgress } = require('../config/gameConfig');
 const { getAutomation, getPreferredSeed, getConfigSnapshot, applyConfigSnapshot, getFertilizerBuyType, getFertilizerBuyCount } = require('../models/store');
 const { checkAndClaimEmails } = require('../services/email');
 const { getEmailDailyState } = require('../services/email');
-const { checkFarm, startFarmCheckLoop, stopFarmCheckLoop, refreshFarmCheckLoop, getLandsDetail, getAvailableSeeds, runFarmOperation, runFertilizerByConfig } = require('../services/farm');
+const { checkFarm, startFarmCheckLoop, stopFarmCheckLoop, refreshFarmCheckLoop, getLandsDetail, getAvailableSeeds, runFarmOperation, runSingleLandOperation, runFertilizerByConfig } = require('../services/farm');
 const { checkFriends, startFriendCheckLoop, stopFriendCheckLoop, refreshFriendCheckLoop, runBadOnceOnStartup, isHelpExpLimitReached, getFriendsList, getFriendLandsDetail, doFriendOperation } = require('../services/friend');
 const { getInteractRecords } = require('../services/interact');
 const { processInviteCodes } = require('../services/invite');
@@ -651,6 +651,9 @@ async function handleApiCall(msg) {
             }
             case 'doFarmOp':
                 result = await runFarmOperation(args[0]); // opType
+                break;
+            case 'doFarmLandOp':
+                result = await runSingleLandOperation(args[0], args[1]);
                 break;
             case 'buyFertilizer': {
                 const fertilizerType = args[0] || 'organic';

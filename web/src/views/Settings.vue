@@ -211,8 +211,10 @@ const localStrategySettings = ref({
   bagSeedPriority: [] as number[],
   bagSeedFallbackStrategy: 'level',
   stealDelaySeconds: 0,
+  harvestDelaySeconds: 0,
   plantOrderRandom: false,
   plantDelaySeconds: 0,
+  fertilizerDelaySeconds: 0,
   intervals: { farmMin: 2, farmMax: 5, helpMin: 10, helpMax: 15, stealMin: 10, stealMax: 15 },
   friendQuietHours: { enabled: false, start: '23:00', end: '07:00' },
 })
@@ -275,7 +277,7 @@ async function fetchBagSeeds() {
       headers: { 'x-account-id': currentAccountId.value },
     })
     if (res.data.ok) {
-      bagSeeds.value = (res.data.data || []).filter((s: BagSeedItem) => s.plantSize === 1)
+      bagSeeds.value = res.data.data || []
     }
   }
   catch (e: any) {
@@ -446,8 +448,10 @@ function syncLocalStrategySettings() {
       bagSeedPriority: settings.value.bagSeedPriority ?? [],
       bagSeedFallbackStrategy: settings.value.bagSeedFallbackStrategy ?? 'level',
       stealDelaySeconds: settings.value.stealDelaySeconds ?? 0,
+      harvestDelaySeconds: settings.value.harvestDelaySeconds ?? 0,
       plantOrderRandom: !!settings.value.plantOrderRandom,
       plantDelaySeconds: settings.value.plantDelaySeconds ?? 0,
+      fertilizerDelaySeconds: settings.value.fertilizerDelaySeconds ?? 0,
       intervals: settings.value.intervals,
       friendQuietHours: settings.value.friendQuietHours,
     }))
@@ -1110,7 +1114,7 @@ async function handleTestOffline() {
                       背包种子优先顺序
                     </div>
                     <p class="mt-1 text-xs text-amber-700/90 dark:text-amber-300/90">
-                      先按下方顺序消耗背包中的 1x1 种子；背包种子不足时，再按"第二优先策略"补种。
+                      先按下方顺序消耗背包中的种子；背包种子不足时，再按"第二优先策略"补种。
                     </p>
                   </div>
                   <button
@@ -1127,7 +1131,7 @@ async function handleTestOffline() {
                   {{ bagSeedsError }}
                 </div>
                 <div v-else-if="bagSeeds.length === 0" class="py-4 text-center text-sm text-amber-700 dark:text-amber-300">
-                  背包中暂无 1x1 种子
+                  背包中暂无种子
                 </div>
                 <div v-else class="grid gap-2 lg:grid-cols-3 sm:grid-cols-2">
                   <div
@@ -1149,6 +1153,12 @@ async function handleTestOffline() {
                       <div class="text-xs text-gray-500 dark:text-gray-400">
                         数量: {{ seed.count }} | 等级: {{ seed.requiredLevel }}
                       </div>
+                    </div>
+                    <div
+                      v-if="seed.plantSize > 1"
+                      class="shrink-0 rounded bg-pink-100 px-1.5 py-0.5 text-[10px] text-pink-700 font-semibold dark:bg-pink-900/30 dark:text-pink-300"
+                    >
+                      {{ seed.plantSize }}x{{ seed.plantSize }}
                     </div>
                     <div class="flex shrink-0 flex-col gap-1">
                       <button
@@ -1240,16 +1250,28 @@ async function handleTestOffline() {
 
             <div class="border-t pt-3 space-y-3 dark:border-gray-700">
               <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
-                种植与偷菜延迟设置
+                收获、种植、施肥与偷菜延迟设置
               </h4>
-              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-5">
                 <BaseSwitch
                   v-model="localStrategySettings.plantOrderRandom"
                   label="种植顺序随机"
                 />
                 <BaseInput
+                  v-model.number="localStrategySettings.harvestDelaySeconds"
+                  label="收获延迟 (秒)"
+                  type="number"
+                  min="0"
+                />
+                <BaseInput
                   v-model.number="localStrategySettings.plantDelaySeconds"
                   label="种植延迟 (秒)"
+                  type="number"
+                  min="0"
+                />
+                <BaseInput
+                  v-model.number="localStrategySettings.fertilizerDelaySeconds"
+                  label="施肥延迟 (秒)"
                   type="number"
                   min="0"
                 />

@@ -62,8 +62,10 @@ export interface SettingsState {
   ui: UIConfig
   offlineReminder: OfflineConfig
   stealDelaySeconds: number
+  harvestDelaySeconds: number
   plantOrderRandom: boolean
   plantDelaySeconds: number
+  fertilizerDelaySeconds: number
   fertilizerBuyOrganicCount: number
   fertilizerBuyOrganicThresholdHours: number
   fertilizerBuyNormalCount: number
@@ -91,8 +93,10 @@ export const useSettingStore = defineStore('setting', () => {
       offlineDeleteSec: 0,
     },
     stealDelaySeconds: 0,
+    harvestDelaySeconds: 0,
     plantOrderRandom: false,
     plantDelaySeconds: 0,
+    fertilizerDelaySeconds: 0,
     fertilizerBuyOrganicCount: 10,
     fertilizerBuyOrganicThresholdHours: 10,
     fertilizerBuyNormalCount: 10,
@@ -127,8 +131,10 @@ export const useSettingStore = defineStore('setting', () => {
           offlineDeleteSec: 0,
         }
         settings.value.stealDelaySeconds = d.stealDelaySeconds ?? 0
+        settings.value.harvestDelaySeconds = d.harvestDelaySeconds ?? 0
         settings.value.plantOrderRandom = d.plantOrderRandom ?? false
         settings.value.plantDelaySeconds = d.plantDelaySeconds ?? 0
+        settings.value.fertilizerDelaySeconds = d.fertilizerDelaySeconds ?? 0
         settings.value.fertilizerBuyOrganicCount = d.fertilizerBuyOrganicCount ?? 10
         settings.value.fertilizerBuyOrganicThresholdHours = d.fertilizerBuyOrganicThresholdHours ?? 10
         settings.value.fertilizerBuyNormalCount = d.fertilizerBuyNormalCount ?? 10
@@ -156,8 +162,10 @@ export const useSettingStore = defineStore('setting', () => {
         intervals: newSettings.intervals,
         friendQuietHours: newSettings.friendQuietHours,
         stealDelaySeconds: newSettings.stealDelaySeconds ?? 0,
+        harvestDelaySeconds: newSettings.harvestDelaySeconds ?? 0,
         plantOrderRandom: newSettings.plantOrderRandom ?? false,
         plantDelaySeconds: newSettings.plantDelaySeconds ?? 0,
+        fertilizerDelaySeconds: newSettings.fertilizerDelaySeconds ?? 0,
         fertilizerBuyOrganicCount: newSettings.fertilizerBuyOrganicCount ?? 10,
         fertilizerBuyOrganicThresholdHours: newSettings.fertilizerBuyOrganicThresholdHours ?? 10,
         fertilizerBuyNormalCount: newSettings.fertilizerBuyNormalCount ?? 10,

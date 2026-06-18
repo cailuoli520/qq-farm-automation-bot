@@ -5,7 +5,7 @@
 const protobuf = require('protobufjs');
 const { CONFIG, PlantPhase, PHASE_NAMES } = require('../config/config');
 const { getPlantNameBySeedId, getPlantName, getPlantExp, formatGrowTime, getPlantGrowTime, getAllSeeds, getPlantById, getPlantBySeedId, getSeedImageBySeedId } = require('../config/gameConfig');
-const { isAutomationOn, getPreferredSeed, getAutomation, getPlantingStrategy, getBagSeedPriority, getBagSeedFallbackStrategy, getFertilizerBuyOrganicCount, getFertilizerBuyOrganicThresholdHours, getFertilizerBuyNormalCount, getFertilizerBuyNormalThresholdHours, getFertilizerBuyCheckIntervalMinutes } = require('../models/store');
+const { isAutomationOn, getPreferredSeed, getAutomation, getPlantingStrategy, getBagSeedPriority, getBagSeedFallbackStrategy, getHarvestDelaySeconds, getPlantDelaySeconds, getFertilizerDelaySeconds, getFertilizerBuyOrganicCount, getFertilizerBuyOrganicThresholdHours, getFertilizerBuyNormalCount, getFertilizerBuyNormalThresholdHours, getFertilizerBuyCheckIntervalMinutes } = require('../models/store');
 const { sendMsgAsync, getUserState, networkEvents, getWsErrorState } = require('../utils/network');
 const { types } = require('../utils/proto');
 const { toLong, toNum, getServerTimeSec, toTimeSec, log, logWarn, sleep, randomDelay } = require('../utils/utils');
@@ -86,12 +86,27 @@ const NORMAL_FERTILIZER_ID = 1011;
 // 有机肥料 ID
 const ORGANIC_FERTILIZER_ID = 1012;
 
+function secondsToDelayMs(seconds, fallbackMs) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return fallbackMs;
+    return Math.max(50, Math.min(300, value) * 1000);
+}
+
+function isMatureDelaySatisfied(currentPhase, delaySeconds, nowSec) {
+    const delay = Number(delaySeconds) || 0;
+    if (delay <= 0) return true;
+    const matureBegin = toTimeSec(currentPhase && currentPhase.begin_time);
+    if (matureBegin <= 0 || nowSec <= 0) return true;
+    return (nowSec - matureBegin) >= delay;
+}
+
 /**
  * 施肥 - 必须逐块进行，服务器不支持批量
  * 游戏中拖动施肥间隔很短，这里用 50ms
  */
 async function fertilize(landIds, fertilizerId = NORMAL_FERTILIZER_ID) {
     let successCount = 0;
+    const delayMs = secondsToDelayMs(getFertilizerDelaySeconds(), 50);
     for (const landId of landIds) {
         try {
             const body = types.FertilizeRequest.encode(types.FertilizeRequest.create({
@@ -104,7 +119,7 @@ async function fertilize(landIds, fertilizerId = NORMAL_FERTILIZER_ID) {
             // 施肥失败（可能肥料不足），停止继续
             break;
         }
-        if (landIds.length > 1) await sleep(50);  // 50ms 间隔
+        if (landIds.length > 1) await sleep(delayMs);
     }
     return successCount;
 }
@@ -119,6 +134,7 @@ async function fertilizeOrganicLoop(landIds) {
 
     let successCount = 0;
     let idx = 0;
+    const delayMs = secondsToDelayMs(getFertilizerDelaySeconds(), 1000);
 
     while (true) {
         const landId = ids[idx];
@@ -135,7 +151,7 @@ async function fertilizeOrganicLoop(landIds) {
         }
 
         idx = (idx + 1) % ids.length;
-        await randomDelay(1000, 1500);
+        await sleep(delayMs);
     }
 
     return successCount;
@@ -557,6 +573,7 @@ async function plantSeeds(seedId, landIds, options = {}) {
     // for (const landId of landIds) {
     const plantedLandIds = [];
     const occupiedLandIds = new Set();
+    const delayMs = secondsToDelayMs(getPlantDelaySeconds(), 50);
     const maxPlantCount = Math.max(0, toNum(options.maxPlantCount) || 0) || Number.POSITIVE_INFINITY;
     const pendingLandIds = new Set((Array.isArray(landIds) ? landIds : []).map(id => toNum(id)).filter(Boolean));
 
@@ -585,7 +602,7 @@ async function plantSeeds(seedId, landIds, options = {}) {
         } catch (e) {
             logWarn('种植', `土地#${landId} 失败: ${e.message}`);
         }
-        if (landIds.length > 1) await sleep(50);  // 50ms 间隔
+        if (landIds.length > 1) await sleep(delayMs);
     }
     return {
         planted: successCount,
@@ -638,7 +655,7 @@ async function plantFromBagSeeds(landsToPlant) {
     const bagSeeds = await getBagSeeds();
     const allBagSeeds = Array.isArray(bagSeeds) ? bagSeeds : [];
     const usableSeeds = sortBagSeedsForPlanting(
-        allBagSeeds.filter(seed => Number(seed && seed.count) > 0 && Number(seed && seed.plantSize) === 1),
+        allBagSeeds.filter(seed => Number(seed && seed.count) > 0),
         getBagSeedPriority(),
     );
 
@@ -665,7 +682,10 @@ async function plantFromBagSeeds(landsToPlant) {
     for (const seed of usableSeeds) {
         if (remainingLandIds.length === 0) break;
 
-        const maxPlantCount = Math.min(Number(seed.count || 0), remainingLandIds.length);
+        const plantSize = Math.max(1, Number(seed && seed.plantSize) || getPlantSizeBySeedId(seed.seedId));
+        const landFootprint = plantSize * plantSize;
+        const maxByLand = Math.floor(remainingLandIds.length / landFootprint);
+        const maxPlantCount = Math.min(Number(seed.count || 0), maxByLand);
         if (maxPlantCount <= 0) continue;
 
         const result = await plantSeeds(seed.seedId, remainingLandIds, { maxPlantCount });
@@ -676,7 +696,7 @@ async function plantFromBagSeeds(landsToPlant) {
             occupiedCount += currentOccupied.length > 0 ? currentOccupied.length : result.planted;
             plantedLandIds.push(...currentPlantedLandIds);
             remainingLandIds = remainingLandIds.filter(id => !currentOccupied.includes(id));
-            usedSeedLogs.push(`${seed.name}x${result.planted}`);
+            usedSeedLogs.push(plantSize > 1 ? `${seed.name}(${plantSize}x${plantSize})x${result.planted}` : `${seed.name}x${result.planted}`);
         }
 
         if (result.planted < maxPlantCount && remainingLandIds.length > 0) {
@@ -976,7 +996,11 @@ async function getLandsDetail() {
             const totalGrowTime = getPlantGrowTime(plantId);
 
             let landStatus = 'growing';
-            if (phaseVal === PlantPhase.MATURE) landStatus = 'harvestable';
+            if (phaseVal === PlantPhase.MATURE) {
+                landStatus = isMatureDelaySatisfied(currentPhase, getHarvestDelaySeconds(), nowSec)
+                    ? 'harvestable'
+                    : 'growing';
+            }
             else if (phaseVal === PlantPhase.DEAD) landStatus = 'dead';
             else if (phaseVal === PlantPhase.UNKNOWN || !plant.phases.length) landStatus = 'empty';
 
@@ -1010,6 +1034,10 @@ async function getLandsDetail() {
                 masterLandId,
                 occupiedLandIds,
                 plantSize,
+                isNudged: !!plant.is_nudged,
+                organicFertLeftTimes: Object.prototype.hasOwnProperty.call(plant, 'left_inorc_fert_times')
+                    ? Math.max(0, toNum(plant.left_inorc_fert_times))
+                    : null,
             });
         }
 
@@ -1238,6 +1266,7 @@ function analyzeLands(lands) {
     };
 
     const nowSec = getServerTimeSec();
+    const harvestDelaySeconds = getHarvestDelaySeconds();
     const debug = isFirstFarmCheck;
     const landsMap = buildLandMap(lands);
 
@@ -1279,6 +1308,10 @@ function analyzeLands(lands) {
         }
 
         if (phaseVal === PlantPhase.MATURE) {
+            if (!isMatureDelaySatisfied(currentPhase, harvestDelaySeconds, nowSec)) {
+                result.growing.push(id);
+                continue;
+            }
             result.harvestable.push(id);
             const plantId = toNum(plant.id);
             const plantNameFromConfig = getPlantName(plantId);
@@ -1410,6 +1443,123 @@ async function resolveRemovableHarvestedLands(harvestedLandIds, harvestReply) {
     };
 }
 
+function ensureSingleLandOperation(opType) {
+    const op = String(opType || '').trim().toLowerCase();
+    const allowed = new Set(['harvest', 'clear', 'plant', 'remove', 'upgrade', 'unlock', 'nudge']);
+    if (!allowed.has(op)) {
+        throw new Error(`Unsupported land operation: ${opType}`);
+    }
+    return op;
+}
+
+async function runSingleLandOperation(landId, opType) {
+    const id = toNum(landId);
+    if (!id) throw new Error('Invalid land id');
+
+    const op = ensureSingleLandOperation(opType);
+    const landsReply = await getAllLands();
+    const lands = Array.isArray(landsReply && landsReply.lands) ? landsReply.lands : [];
+    const landsMap = buildLandMap(lands);
+    const land = landsMap.get(id);
+    if (!land) throw new Error(`Land #${id} not found`);
+
+    const status = analyzeLands(lands);
+    const displayContext = getDisplayLandContext(land, landsMap);
+    const plantTargetId = displayContext.occupiedByMaster ? displayContext.masterLandId : id;
+    const targetLand = landsMap.get(plantTargetId) || land;
+    const actions = [];
+
+    if (op === 'unlock') {
+        if (land.unlocked) return { hadWork: false, actions };
+        if (!land.could_unlock) throw new Error(`Land #${id} cannot be unlocked yet`);
+        await unlockLand(id, false);
+        actions.push(`unlock:${id}`);
+        return { hadWork: true, actions };
+    }
+
+    if (!land.unlocked) {
+        throw new Error(`Land #${id} is locked`);
+    }
+
+    if (op === 'upgrade') {
+        if (!land.could_upgrade) return { hadWork: false, actions };
+        await upgradeLand(id);
+        recordOperation('upgrade', 1);
+        actions.push(`upgrade:${id}`);
+        return { hadWork: true, actions };
+    }
+
+    if (op === 'harvest') {
+        if (!status.harvestable.includes(plantTargetId)) return { hadWork: false, actions };
+        await harvest([plantTargetId]);
+        recordOperation('harvest', 1);
+        actions.push(`harvest:${plantTargetId}`);
+        return { hadWork: true, actions };
+    }
+
+    if (op === 'nudge') {
+        const targetPlant = targetLand && targetLand.plant ? targetLand.plant : null;
+        if (!targetPlant) return { hadWork: false, actions };
+        if (!status.growing.includes(plantTargetId)) return { hadWork: false, actions };
+        if (Object.prototype.hasOwnProperty.call(targetPlant, 'left_inorc_fert_times')) {
+            const leftTimes = toNum(targetPlant.left_inorc_fert_times);
+            if (leftTimes <= 0) return { hadWork: false, actions };
+        }
+        const nudged = await fertilize([plantTargetId], ORGANIC_FERTILIZER_ID);
+        if (nudged <= 0) {
+            throw new Error(`Organic fertilizer failed on land #${plantTargetId}`);
+        }
+        recordOperation('fertilize', nudged);
+        actions.push(`nudge:${plantTargetId}`);
+        return { hadWork: true, actions };
+    }
+
+    if (op === 'clear') {
+        if (status.needWeed.includes(plantTargetId)) {
+            await weedOut([plantTargetId]);
+            recordOperation('weed', 1);
+            actions.push(`weed:${plantTargetId}`);
+            await randomDelay(600, 1000);
+        }
+        if (status.needBug.includes(plantTargetId)) {
+            await insecticide([plantTargetId]);
+            recordOperation('bug', 1);
+            actions.push(`bug:${plantTargetId}`);
+            await randomDelay(600, 1000);
+        }
+        if (status.needWater.includes(plantTargetId)) {
+            await waterLand([plantTargetId]);
+            recordOperation('water', 1);
+            actions.push(`water:${plantTargetId}`);
+        }
+        return { hadWork: actions.length > 0, actions };
+    }
+
+    if (op === 'remove') {
+        if (displayContext.occupiedByMaster && plantTargetId !== id) {
+            throw new Error(`Land #${id} is occupied by merged crop on land #${plantTargetId}`);
+        }
+        await removePlant([id]);
+        recordOperation('remove', 1);
+        actions.push(`remove:${id}`);
+        return { hadWork: true, actions };
+    }
+
+    if (op === 'plant') {
+        if (displayContext.occupiedByMaster) {
+            return { hadWork: false, actions };
+        }
+        const isDead = status.dead.includes(id);
+        const isEmpty = status.empty.includes(id);
+        if (!isDead && !isEmpty) return { hadWork: false, actions };
+        await autoPlantEmptyLands(isDead ? [id] : [], isEmpty ? [id] : []);
+        actions.push(`plant:${id}`);
+        return { hadWork: true, actions };
+    }
+
+    return { hadWork: false, actions };
+}
+
 async function checkFarm() {
     const state = getUserState();
     if (isCheckingFarm || !state.gid || !isAutomationOn('farm')) return false;
@@ -1493,6 +1643,18 @@ async function runFarmOperation(opType) {
     }
 
     // 执行收获
+    if (opType === 'remove') {
+        if (status.dead.length > 0) {
+            try {
+                await removePlant(status.dead);
+                actions.push(`remove${status.dead.length}`);
+                recordOperation('remove', status.dead.length);
+            } catch (e) {
+                logWarn('remove', e.message);
+            }
+        }
+    }
+
     let harvestedLandIds = [];
     let harvestReply = null;
     let postHarvest = null;
@@ -1768,6 +1930,7 @@ module.exports = {
     getLandsDetail,
     getAvailableSeeds,
     runFarmOperation,
+    runSingleLandOperation,
     runFertilizerByConfig,
     buildLandMap,
     buildSlaveToMasterMap,

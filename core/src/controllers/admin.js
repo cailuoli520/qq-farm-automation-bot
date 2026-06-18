@@ -1413,6 +1413,25 @@ function startAdminServer(dataProvider) {
     });
 
     // API: 数据分析
+    app.post('/api/farm/land/:landId/op', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false });
+
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: 'Forbidden' });
+        }
+
+        try {
+            const landId = Number(req.params.landId) || 0;
+            const { opType } = req.body || {};
+            if (!landId) return res.status(400).json({ ok: false, error: 'Missing landId' });
+            const data = await provider.doFarmLandOp(id, landId, opType);
+            res.json({ ok: true, data });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
     app.get('/api/analytics', async (req, res) => {
         try {
             const sortBy = req.query.sort || 'exp';
@@ -1547,8 +1566,10 @@ function startAdminServer(dataProvider) {
             const friendQuietHours = id ? store.getFriendQuietHours(id) : null;
             const automation = id ? store.getAutomation(id) : {};
             const stealDelaySeconds = id && (typeof store.getStealDelaySeconds === 'function') ? store.getStealDelaySeconds(id) : 0;
+            const harvestDelaySeconds = id && (typeof store.getHarvestDelaySeconds === 'function') ? store.getHarvestDelaySeconds(id) : 0;
             const plantOrderRandom = id && (typeof store.getPlantOrderRandom === 'function') ? store.getPlantOrderRandom(id) : false;
             const plantDelaySeconds = id && (typeof store.getPlantDelaySeconds === 'function') ? store.getPlantDelaySeconds(id) : 0;
+            const fertilizerDelaySeconds = id && (typeof store.getFertilizerDelaySeconds === 'function') ? store.getFertilizerDelaySeconds(id) : 0;
             const fertilizerBuyOrganicCount = id && (typeof store.getFertilizerBuyOrganicCount === 'function') ? store.getFertilizerBuyOrganicCount(id) : 0;
             const fertilizerBuyOrganicThresholdHours = id && (typeof store.getFertilizerBuyOrganicThresholdHours === 'function') ? store.getFertilizerBuyOrganicThresholdHours(id) : 10;
             const fertilizerBuyNormalCount = id && (typeof store.getFertilizerBuyNormalCount === 'function') ? store.getFertilizerBuyNormalCount(id) : 0;
@@ -1561,7 +1582,7 @@ function startAdminServer(dataProvider) {
             const offlineReminder = store.getOfflineReminder && currentUser
                 ? store.getOfflineReminder(currentUser.username)
                 : { channel: 'webhook', reloginUrlMode: 'none', endpoint: '', token: '', title: '账号下线提醒', msg: '账号下线', offlineDeleteSec: 0 };
-            res.json({ ok: true, data: { intervals, strategy, preferredSeed, friendQuietHours, automation, stealDelaySeconds, plantOrderRandom, plantDelaySeconds, fertilizerBuyOrganicCount, fertilizerBuyOrganicThresholdHours, fertilizerBuyNormalCount, fertilizerBuyNormalThresholdHours, fertilizerBuyCheckIntervalMinutes, bagSeedPriority, bagSeedFallbackStrategy, ui, offlineReminder } });
+            res.json({ ok: true, data: { intervals, strategy, preferredSeed, friendQuietHours, automation, stealDelaySeconds, harvestDelaySeconds, plantOrderRandom, plantDelaySeconds, fertilizerDelaySeconds, fertilizerBuyOrganicCount, fertilizerBuyOrganicThresholdHours, fertilizerBuyNormalCount, fertilizerBuyNormalThresholdHours, fertilizerBuyCheckIntervalMinutes, bagSeedPriority, bagSeedFallbackStrategy, ui, offlineReminder } });
         } catch (e) {
             res.status(500).json({ ok: false, error: e.message });
         }

@@ -14,6 +14,7 @@ const {
     getKnownFriendGids,
     getKnownFriendGidSyncCooldownSec,
     getFriendsListCacheTtlSec,
+    getStealDelaySeconds,
     applyConfigSnapshot,
 } = require('../models/store');
 const { sendMsgAsync, getUserState, networkEvents } = require('../utils/network');
@@ -789,6 +790,8 @@ async function checkCanOperateRemote(friendGid, operationId) {
 
 function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
     const { plantBlacklist = null } = options;
+    const nowSec = getServerTimeSec();
+    const stealDelaySeconds = getStealDelaySeconds();
     const result = {
         stealable: [],   // 可偷
         stealableInfo: [],  // 可偷植物信息 { landId, plantId, name }
@@ -819,6 +822,10 @@ function analyzeFriendLands(lands, myGid, friendName = '', options = {}) {
 
         if (phaseVal === PlantPhase.MATURE) {
             if (plant.stealable) {
+                const matureBegin = toTimeSec(currentPhase.begin_time);
+                if (stealDelaySeconds > 0 && matureBegin > 0 && nowSec > 0 && (nowSec - matureBegin) < stealDelaySeconds) {
+                    continue;
+                }
                 const plantId = toNum(plant.id);
                 const plantName = getPlantName(plantId) || plant.name || '未知';
 
