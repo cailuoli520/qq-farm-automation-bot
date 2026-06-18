@@ -103,6 +103,7 @@ function createDataProvider(options) {
         useItem: (accountRef, itemId, count) => callWorkerApi(resolveAccountRefId(accountRef), 'useItem', itemId, count),
         sellItems: (accountRef, items) => callWorkerApi(resolveAccountRefId(accountRef), 'sellItems', items),
         getDailyGifts: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getDailyGiftOverview'),
+        getProfileModules: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getProfileModules'),
         getSeeds: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getSeeds'),
 
         setAutomation: async (accountRef, key, value) => {

@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package gamepb.skinpb;
+
+message SkinsOwnedRequest {}
+message SkinsEquippedRequest {}
+
+message SkinInfo {
+    int64 id = 1;
+    int32 type = 2;
+    int64 expire_at = 3;
+    bool equipped = 4;
+    int32 source = 5;
+}
+
+message SkinsOwnedReply {
+    repeated SkinInfo skins = 1;
+}
+
+message SkinsEquippedReply {
+    repeated SkinInfo skins = 1;
+}

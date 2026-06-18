@@ -1353,6 +1353,22 @@ function startAdminServer(dataProvider) {
         }
     });
 
+    app.get('/api/profile/modules', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: 'Forbidden' });
+        }
+
+        try {
+            const data = await provider.getProfileModules(id);
+            res.json({ ok: true, data });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
     // API: 启动账号
     app.post('/api/accounts/:id/start', (req, res) => {
         try {

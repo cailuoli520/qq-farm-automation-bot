@@ -60,6 +60,18 @@ environment/risk-control exchange and prefer conservative scheduling, low
 concurrency, and real client captures before adding any behavior that depends on
 it.
 
+Implemented read-only modules:
+
+- Dog info: `DogService.GetDogInfo`
+- Skin/dress-up ownership: `SkinService.SkinsOwned`
+- Skin/dress-up equipped state: `SkinService.SkinsEquipped`
+- Avatar frame ownership: `AvatarFrameService.AvatarFramesOwned`
+
+Pending captures:
+
+- Personal career module: no complete request/reply pair captured yet.
+- Golden bug dedicated protocol: no complete request/reply pair captured yet.
+
 ## Decoder
 
 Use the local decoder for Fiddler `_w.txt` WebSocket exports:

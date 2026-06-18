@@ -698,6 +698,9 @@ async function handleApiCall(msg) {
             case 'getDailyGiftOverview':
                 result = await getDailyGiftOverview();
                 break;
+            case 'getProfileModules':
+                result = await require('../services/profile').getProfileModules();
+                break;
             case 'getSchedulers':
                 result = getSchedulerRegistrySnapshot();
                 break;

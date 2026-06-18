@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package gamepb.dogpb;
+
+message GetDogInfoRequest {}
+
+message DogInfo {
+    int64 id = 1;
+    string name = 2;
+    int32 status = 3;
+    int32 intimacy = 4;
+    bool equipped = 5;
+}
+
+message DogFoodInfo {
+    int64 id = 1;
+    int64 count = 2;
+    int64 extra = 3;
+}
+
+message GetDogInfoReply {
+    repeated DogInfo dogs = 1;
+    int64 equipped_dog_id = 2;
+    int64 guard_left_seconds = 3;
+    int64 guard_total_seconds = 4;
+    repeated DogFoodInfo foods = 5;
+}

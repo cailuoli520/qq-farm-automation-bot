@@ -31,6 +31,9 @@ async function loadProto() {
         getResourcePath('proto', 'sharepb.proto'),
         getResourcePath('proto', 'illustratedpb.proto'),
         getResourcePath('proto', 'interactpb.proto'),
+        getResourcePath('proto', 'dogpb.proto'),
+        getResourcePath('proto', 'skinpb.proto'),
+        getResourcePath('proto', 'avatarframepb.proto'),
     ], { keepCase: true });
 
     // 网关
@@ -118,6 +121,14 @@ async function loadProto() {
     types.GetIllustratedListV2Reply = root.lookupType('gamepb.illustratedpb.GetIllustratedListV2Reply');
     types.ClaimAllRewardsV2Request = root.lookupType('gamepb.illustratedpb.ClaimAllRewardsV2Request');
     types.ClaimAllRewardsV2Reply = root.lookupType('gamepb.illustratedpb.ClaimAllRewardsV2Reply');
+    types.GetDogInfoRequest = root.lookupType('gamepb.dogpb.GetDogInfoRequest');
+    types.GetDogInfoReply = root.lookupType('gamepb.dogpb.GetDogInfoReply');
+    types.SkinsOwnedRequest = root.lookupType('gamepb.skinpb.SkinsOwnedRequest');
+    types.SkinsOwnedReply = root.lookupType('gamepb.skinpb.SkinsOwnedReply');
+    types.SkinsEquippedRequest = root.lookupType('gamepb.skinpb.SkinsEquippedRequest');
+    types.SkinsEquippedReply = root.lookupType('gamepb.skinpb.SkinsEquippedReply');
+    types.AvatarFramesOwnedRequest = root.lookupType('gamepb.avatarframepb.AvatarFramesOwnedRequest');
+    types.AvatarFramesOwnedReply = root.lookupType('gamepb.avatarframepb.AvatarFramesOwnedReply');
 
     // 好友
     types.GetAllFriendsRequest = root.lookupType('gamepb.friendpb.GetAllRequest');
