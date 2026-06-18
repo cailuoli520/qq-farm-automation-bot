@@ -45,6 +45,7 @@ export interface OfflineConfig {
   title: string
   msg: string
   offlineDeleteSec: number
+  reloginWatchMinutes: number
 }
 
 export interface UIConfig {
@@ -66,6 +67,11 @@ export interface SettingsState {
   plantOrderRandom: boolean
   plantDelaySeconds: number
   fertilizerDelaySeconds: number
+  connection: {
+    autoReconnectEnabled: boolean
+    reconnectMinSeconds: number
+    reconnectMaxSeconds: number
+  }
   fertilizerBuyOrganicCount: number
   fertilizerBuyOrganicThresholdHours: number
   fertilizerBuyNormalCount: number
@@ -91,12 +97,14 @@ export const useSettingStore = defineStore('setting', () => {
       title: '账号下线提醒',
       msg: '账号下线',
       offlineDeleteSec: 0,
+      reloginWatchMinutes: 3,
     },
     stealDelaySeconds: 0,
     harvestDelaySeconds: 0,
     plantOrderRandom: false,
     plantDelaySeconds: 0,
     fertilizerDelaySeconds: 0,
+    connection: { autoReconnectEnabled: true, reconnectMinSeconds: 3, reconnectMaxSeconds: 180 },
     fertilizerBuyOrganicCount: 10,
     fertilizerBuyOrganicThresholdHours: 10,
     fertilizerBuyNormalCount: 10,
@@ -129,12 +137,14 @@ export const useSettingStore = defineStore('setting', () => {
           title: '账号下线提醒',
           msg: '账号下线',
           offlineDeleteSec: 0,
+          reloginWatchMinutes: 3,
         }
         settings.value.stealDelaySeconds = d.stealDelaySeconds ?? 0
         settings.value.harvestDelaySeconds = d.harvestDelaySeconds ?? 0
         settings.value.plantOrderRandom = d.plantOrderRandom ?? false
         settings.value.plantDelaySeconds = d.plantDelaySeconds ?? 0
         settings.value.fertilizerDelaySeconds = d.fertilizerDelaySeconds ?? 0
+        settings.value.connection = d.connection ?? { autoReconnectEnabled: true, reconnectMinSeconds: 3, reconnectMaxSeconds: 180 }
         settings.value.fertilizerBuyOrganicCount = d.fertilizerBuyOrganicCount ?? 10
         settings.value.fertilizerBuyOrganicThresholdHours = d.fertilizerBuyOrganicThresholdHours ?? 10
         settings.value.fertilizerBuyNormalCount = d.fertilizerBuyNormalCount ?? 10
@@ -166,6 +176,9 @@ export const useSettingStore = defineStore('setting', () => {
         plantOrderRandom: newSettings.plantOrderRandom ?? false,
         plantDelaySeconds: newSettings.plantDelaySeconds ?? 0,
         fertilizerDelaySeconds: newSettings.fertilizerDelaySeconds ?? 0,
+        autoReconnectEnabled: newSettings.connection?.autoReconnectEnabled ?? true,
+        reconnectMinSeconds: newSettings.connection?.reconnectMinSeconds ?? 3,
+        reconnectMaxSeconds: newSettings.connection?.reconnectMaxSeconds ?? 180,
         fertilizerBuyOrganicCount: newSettings.fertilizerBuyOrganicCount ?? 10,
         fertilizerBuyOrganicThresholdHours: newSettings.fertilizerBuyOrganicThresholdHours ?? 10,
         fertilizerBuyNormalCount: newSettings.fertilizerBuyNormalCount ?? 10,

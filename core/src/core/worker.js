@@ -352,6 +352,25 @@ function stopUnifiedScheduler() {
     workerScheduler.clear('unified_next_tick');
 }
 
+function applyConnectionToRuntime(snapshot) {
+    const src = (snapshot && snapshot.connection && typeof snapshot.connection === 'object')
+        ? snapshot.connection
+        : snapshot || {};
+    if (!src || typeof src !== 'object') return;
+    if (src.autoReconnectEnabled !== undefined) {
+        CONFIG.autoReconnectEnabled = src.autoReconnectEnabled !== false;
+    }
+    if (src.reconnectMinSeconds !== undefined) {
+        CONFIG.reconnectMinDelayMs = Math.max(3, Math.min(3600, Number(src.reconnectMinSeconds) || 3)) * 1000;
+    }
+    if (src.reconnectMaxSeconds !== undefined) {
+        CONFIG.reconnectMaxDelayMs = Math.max(3, Math.min(3600, Number(src.reconnectMaxSeconds) || 180)) * 1000;
+    }
+    if (CONFIG.reconnectMinDelayMs > CONFIG.reconnectMaxDelayMs) {
+        [CONFIG.reconnectMinDelayMs, CONFIG.reconnectMaxDelayMs] = [CONFIG.reconnectMaxDelayMs, CONFIG.reconnectMinDelayMs];
+    }
+}
+
 function applyRuntimeConfig(snapshot, syncNow = false) {
     const prevAuto = getAutomation();
     const accountId = process.env.FARM_ACCOUNT_ID || '';
@@ -366,6 +385,7 @@ function applyRuntimeConfig(snapshot, syncNow = false) {
     if (incomingIntervals) {
         applyIntervalsToRuntime(incomingIntervals);
     }
+    applyConnectionToRuntime(snapshot);
 
     if (loginReady) {
         refreshFarmCheckLoop(200);
@@ -465,7 +485,7 @@ async function startBot(config) {
         });
         if (isRunning) {
             workerScheduler.setTimeoutTask('ws_error_cleanup', 1000, () => {
-                if (isRunning) cleanup();
+                if (isRunning) cleanup('连接被拒绝', { disableReconnect: true });
             });
         }
     };
@@ -579,7 +599,7 @@ async function stopBot() {
     stopDailyRoutineTimer();
     cleanupTaskSystem();
     workerScheduler.clearAll();
-    cleanup();
+    cleanup('停止账号', { disableReconnect: true });
     const ws = getWs();
     if (ws) ws.close();
     exitWorker(0);

@@ -22,6 +22,9 @@ const CONFIG = {
     farmCheckIntervalMax: 5000,
     friendCheckIntervalMin: 12000,
     friendCheckIntervalMax: 15000,
+    autoReconnectEnabled: true,
+    reconnectMinDelayMs: 3000,
+    reconnectMaxDelayMs: 180000,
     adminPort: Number(process.env.ADMIN_PORT),
     adminPassword: process.env.ADMIN_PASSWORD,
 };

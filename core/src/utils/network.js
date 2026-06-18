@@ -461,6 +461,7 @@ async function sendLogin(onLoginSuccess) {
 
             }
 
+            reconnectAttempt = 0;
             startHeartbeat();
             if (onLoginSuccess) onLoginSuccess();
         } catch (e) {
@@ -489,15 +490,14 @@ function startHeartbeat() {
             heartbeatMissCount++;
             logWarn('心跳', `连接可能已断开 (${Math.round(timeSinceLastResponse/1000)}s 无响应, pending=${pendingCallbacks.size})`);
             if (heartbeatMissCount >= MAX_HEARTBEAT_MISS) {
-                log('心跳', '心跳超时，立即重连...');
+                log('心跳', '心跳超时，准备自动重连...');
                 // 清理待处理的回调，避免堆积
                 // pendingCallbacks.forEach((cb, _seq) => {
                 //     try { cb(new Error('连接超时，已清理')); } catch {}
                 // });
                 // pendingCallbacks.clear();
                 rejectAllPendingRequests('连接超时，已清理');
-                // 立即触发重连
-                reconnect(null);
+                scheduleReconnect('心跳超时');
                 return;
             }
         }
@@ -520,6 +520,29 @@ function startHeartbeat() {
 // ============ WebSocket 连接 ============
 let savedLoginCallback = null;
 let savedCode = null;
+let reconnectAttempt = 0;
+
+function getReconnectDelayMs() {
+    const minMs = Math.max(3000, Number(CONFIG.reconnectMinDelayMs) || 3000);
+    const maxMs = Math.max(minMs, Number(CONFIG.reconnectMaxDelayMs) || 180000);
+    const expMs = minMs * (2 ** Math.min(8, reconnectAttempt));
+    const baseMs = Math.min(maxMs, expMs);
+    const jitterMs = Math.floor(Math.random() * Math.min(1000, minMs));
+    reconnectAttempt += 1;
+    return Math.min(maxMs, baseMs + jitterMs);
+}
+
+function scheduleReconnect(reason = 'unknown') {
+    if (!savedLoginCallback) return;
+    if (CONFIG.autoReconnectEnabled === false) return;
+    if ((Number(wsErrorState.code) || 0) === 400) return;
+    networkScheduler.clear('auto_reconnect');
+    const delayMs = getReconnectDelayMs();
+    log('系统', `[WS] ${reason}，${Math.round(delayMs / 1000)}s 后自动重连...`);
+    networkScheduler.setTimeoutTask('auto_reconnect', delayMs, () => {
+        reconnect(null);
+    });
+}
 
 function connect(code, onLoginSuccess) {
     savedLoginCallback = onLoginSuccess;
@@ -546,13 +569,7 @@ function connect(code, onLoginSuccess) {
     ws.on('close', (code, _reason) => {
         console.warn(`[WS] 连接关闭 (code=${code})`);
         cleanup();
-        // 自动重连：延迟 2s 后重试，复用已保存的登录回调
-        if (savedLoginCallback) {
-            networkScheduler.setTimeoutTask('auto_reconnect', 2000, () => {
-                log('系统', '[WS] 尝试自动重连...');
-                reconnect(null);
-            });
-        }
+        scheduleReconnect(`连接关闭(code=${code})`);
     });
 
     ws.on('error', (err) => {
@@ -569,7 +586,11 @@ function connect(code, onLoginSuccess) {
     });
 }
 
-function cleanup(reason = '网络清理') {
+function cleanup(reason = '网络清理', options = {}) {
+    if (options && options.disableReconnect) {
+        savedLoginCallback = null;
+        networkScheduler.clear('auto_reconnect');
+    }
     rejectAllPendingRequests(`请求已中断: ${reason}`);
     networkScheduler.clearAll();
     // pendingCallbacks.clear();

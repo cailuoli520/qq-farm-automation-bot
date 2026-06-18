@@ -115,6 +115,7 @@ const DEFAULT_OFFLINE_REMINDER = {
     title: '账号下线提醒',
     msg: '账号下线',
     offlineDeleteSec: 0,
+    reloginWatchMinutes: 3,
 };
 // ============ 全局配置 ============
 const DEFAULT_ACCOUNT_CONFIG = {
@@ -198,6 +199,9 @@ const DEFAULT_ACCOUNT_CONFIG = {
     bagSeedPriority: [],
     // 背包种子用完后的回退策略
     bagSeedFallbackStrategy: 'level',
+    autoReconnectEnabled: true,
+    reconnectMinSeconds: 3,
+    reconnectMaxSeconds: 180,
 };
 const ALLOWED_AUTOMATION_KEYS = new Set(Object.keys(DEFAULT_ACCOUNT_CONFIG.automation));
 
@@ -242,6 +246,11 @@ function normalizeOfflineReminder(input) {
     if (!Number.isFinite(offlineDeleteSec) || offlineDeleteSec < 0) {
         offlineDeleteSec = DEFAULT_OFFLINE_REMINDER.offlineDeleteSec;
     }
+    let reloginWatchMinutes = Number.parseInt(src.reloginWatchMinutes, 10);
+    if (!Number.isFinite(reloginWatchMinutes) || reloginWatchMinutes <= 0) {
+        reloginWatchMinutes = DEFAULT_OFFLINE_REMINDER.reloginWatchMinutes;
+    }
+    reloginWatchMinutes = Math.max(1, Math.min(30, reloginWatchMinutes));
     const rawChannel = (src.channel !== undefined && src.channel !== null)
         ? String(src.channel).trim().toLowerCase()
         : '';
@@ -278,6 +287,7 @@ function normalizeOfflineReminder(input) {
         title,
         msg,
         offlineDeleteSec,
+        reloginWatchMinutes,
     };
 }
 function normalizeFertilizerLandTypes(input, fallback = DEFAULT_FERTILIZER_LAND_TYPES) {
@@ -340,6 +350,9 @@ function cloneAccountConfig(base = DEFAULT_ACCOUNT_CONFIG) {
         fertilizerBuyCheckIntervalMinutes: Math.max(1, Math.min(1440, Number(base.fertilizerBuyCheckIntervalMinutes) || 30)),
         bagSeedPriority: normalizeBagSeedPriority(base.bagSeedPriority),
         bagSeedFallbackStrategy: normalizeBagSeedFallbackStrategy(base.bagSeedFallbackStrategy),
+        autoReconnectEnabled: base.autoReconnectEnabled !== false,
+        reconnectMinSeconds: Math.max(3, Math.min(3600, Number(base.reconnectMinSeconds) || 3)),
+        reconnectMaxSeconds: Math.max(3, Math.min(3600, Number(base.reconnectMaxSeconds) || 180)),
     };
 }
 
@@ -480,6 +493,19 @@ function normalizeAccountConfig(input, fallback = accountFallbackConfig) {
     // 背包种子回退策略
     if (src.bagSeedFallbackStrategy !== undefined && src.bagSeedFallbackStrategy !== null) {
         cfg.bagSeedFallbackStrategy = normalizeBagSeedFallbackStrategy(src.bagSeedFallbackStrategy);
+    }
+
+    if (src.autoReconnectEnabled !== undefined && src.autoReconnectEnabled !== null) {
+        cfg.autoReconnectEnabled = !!src.autoReconnectEnabled;
+    }
+    if (src.reconnectMinSeconds !== undefined && src.reconnectMinSeconds !== null) {
+        cfg.reconnectMinSeconds = Math.max(3, Math.min(3600, Number.parseInt(src.reconnectMinSeconds, 10) || 3));
+    }
+    if (src.reconnectMaxSeconds !== undefined && src.reconnectMaxSeconds !== null) {
+        cfg.reconnectMaxSeconds = Math.max(3, Math.min(3600, Number.parseInt(src.reconnectMaxSeconds, 10) || 180));
+    }
+    if (cfg.reconnectMinSeconds > cfg.reconnectMaxSeconds) {
+        [cfg.reconnectMinSeconds, cfg.reconnectMaxSeconds] = [cfg.reconnectMaxSeconds, cfg.reconnectMinSeconds];
     }
 
     return cfg;
@@ -707,6 +733,9 @@ function getConfigSnapshot(accountId) {
         fertilizerBuyNormalCount: Math.max(0, Math.min(10000, Number(cfg.fertilizerBuyNormalCount) || 0)),
         fertilizerBuyNormalThresholdHours: Math.max(0, Math.min(990, Number(cfg.fertilizerBuyNormalThresholdHours) || 0)),
         fertilizerBuyCheckIntervalMinutes: Math.max(1, Math.min(1440, Number(cfg.fertilizerBuyCheckIntervalMinutes) || 30)),
+        autoReconnectEnabled: cfg.autoReconnectEnabled !== false,
+        reconnectMinSeconds: Math.max(3, Math.min(3600, Number(cfg.reconnectMinSeconds) || 3)),
+        reconnectMaxSeconds: Math.max(3, Math.min(3600, Number(cfg.reconnectMaxSeconds) || 180)),
         ui: { ...globalConfig.ui },
     };
 }
@@ -847,6 +876,19 @@ function applyConfigSnapshot(snapshot, options = {}) {
     // 背包种子回退策略
     if (cfg.bagSeedFallbackStrategy !== undefined && cfg.bagSeedFallbackStrategy !== null) {
         next.bagSeedFallbackStrategy = normalizeBagSeedFallbackStrategy(cfg.bagSeedFallbackStrategy);
+    }
+
+    if (cfg.autoReconnectEnabled !== undefined && cfg.autoReconnectEnabled !== null) {
+        next.autoReconnectEnabled = !!cfg.autoReconnectEnabled;
+    }
+    if (cfg.reconnectMinSeconds !== undefined && cfg.reconnectMinSeconds !== null) {
+        next.reconnectMinSeconds = Math.max(3, Math.min(3600, Number.parseInt(cfg.reconnectMinSeconds, 10) || 3));
+    }
+    if (cfg.reconnectMaxSeconds !== undefined && cfg.reconnectMaxSeconds !== null) {
+        next.reconnectMaxSeconds = Math.max(3, Math.min(3600, Number.parseInt(cfg.reconnectMaxSeconds, 10) || 180));
+    }
+    if (next.reconnectMinSeconds > next.reconnectMaxSeconds) {
+        [next.reconnectMinSeconds, next.reconnectMaxSeconds] = [next.reconnectMaxSeconds, next.reconnectMinSeconds];
     }
 
     if (cfg.ui && typeof cfg.ui === 'object') {
@@ -1061,6 +1103,18 @@ function getFertilizerBuyNormalThresholdHours(accountId) {
 // ============ 化肥自动购买检测间隔 ============
 function getFertilizerBuyCheckIntervalMinutes(accountId) {
     return Math.max(1, Math.min(1440, Number(getAccountConfigSnapshot(accountId).fertilizerBuyCheckIntervalMinutes) || 30));
+}
+
+function getConnectionConfig(accountId) {
+    const cfg = getAccountConfigSnapshot(accountId);
+    let min = Math.max(3, Math.min(3600, Number(cfg.reconnectMinSeconds) || 3));
+    let max = Math.max(3, Math.min(3600, Number(cfg.reconnectMaxSeconds) || 180));
+    if (min > max) [min, max] = [max, min];
+    return {
+        autoReconnectEnabled: cfg.autoReconnectEnabled !== false,
+        reconnectMinSeconds: min,
+        reconnectMaxSeconds: max,
+    };
 }
 
 // ============ 蔬菜黑名单 ============
@@ -1351,6 +1405,7 @@ module.exports = {
     getFertilizerBuyNormalCount,
     getFertilizerBuyNormalThresholdHours,
     getFertilizerBuyCheckIntervalMinutes,
+    getConnectionConfig,
     getUI,
     setUITheme,
     getOfflineReminder,

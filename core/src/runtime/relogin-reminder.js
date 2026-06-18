@@ -73,9 +73,10 @@ function createReloginReminderService(options) {
         }
     }
 
-    function startReloginWatcher({ loginCode, accountId = '', accountName = '' }) {
+    function startReloginWatcher({ loginCode, accountId = '', accountName = '', watchMinutes = 3 }) {
         const code = String(loginCode || '').trim();
         if (!code) return;
+        const maxRounds = Math.max(60, Math.min(1800, Math.round((Number(watchMinutes) || 3) * 60)));
 
         const key = `${accountId || 'unknown'}:${code}`;
         if (reloginWatchers.has(key)) return;
@@ -90,7 +91,6 @@ function createReloginReminderService(options) {
         };
 
         (async () => {
-            const maxRounds = 120; // ~2分钟
             for (let i = 0; i < maxRounds; i += 1) {
                 try {
                     const status = await miniProgramLoginSession.queryStatus(code);
@@ -203,6 +203,7 @@ function createReloginReminderService(options) {
                             loginCode,
                             accountId: String(payload.accountId || '').trim(),
                             accountName: String(payload.accountName || '').trim(),
+                            watchMinutes: Math.max(1, Math.min(30, Number(cfg.reloginWatchMinutes) || 3)),
                         });
                     }
                 } catch (e) {

@@ -215,6 +215,7 @@ const localStrategySettings = ref({
   plantOrderRandom: false,
   plantDelaySeconds: 0,
   fertilizerDelaySeconds: 0,
+  connection: { autoReconnectEnabled: true, reconnectMinSeconds: 3, reconnectMaxSeconds: 180 },
   intervals: { farmMin: 2, farmMax: 5, helpMin: 10, helpMax: 15, stealMin: 10, stealMax: 15 },
   friendQuietHours: { enabled: false, start: '23:00', end: '07:00' },
 })
@@ -452,6 +453,7 @@ function syncLocalStrategySettings() {
       plantOrderRandom: !!settings.value.plantOrderRandom,
       plantDelaySeconds: settings.value.plantDelaySeconds ?? 0,
       fertilizerDelaySeconds: settings.value.fertilizerDelaySeconds ?? 0,
+      connection: settings.value.connection ?? { autoReconnectEnabled: true, reconnectMinSeconds: 3, reconnectMaxSeconds: 180 },
       intervals: settings.value.intervals,
       friendQuietHours: settings.value.friendQuietHours,
     }))
@@ -692,6 +694,7 @@ const localOffline = ref({
   title: '',
   msg: '',
   offlineDeleteSec: 0,
+  reloginWatchMinutes: 3,
 })
 
 const channelOptions = [
@@ -758,7 +761,11 @@ function openChannelDocs() {
 
 function syncLocalOfflineSettings() {
   if (settings.value?.offlineReminder) {
-    localOffline.value = JSON.parse(JSON.stringify(settings.value.offlineReminder))
+    localOffline.value = {
+      ...localOffline.value,
+      ...JSON.parse(JSON.stringify(settings.value.offlineReminder)),
+      reloginWatchMinutes: settings.value.offlineReminder.reloginWatchMinutes ?? 3,
+    }
   }
 }
 
@@ -1284,6 +1291,33 @@ async function handleTestOffline() {
               </div>
             </div>
 
+            <div class="border-t pt-3 space-y-3 dark:border-gray-700">
+              <h4 class="text-sm text-gray-700 font-medium dark:text-gray-300">
+                连接保活/自动重连
+              </h4>
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <BaseSwitch
+                  v-model="localStrategySettings.connection.autoReconnectEnabled"
+                  label="开启自动重连"
+                />
+                <BaseInput
+                  v-model.number="localStrategySettings.connection.reconnectMinSeconds"
+                  label="最小重连间隔 (秒)"
+                  type="number"
+                  min="3"
+                />
+                <BaseInput
+                  v-model.number="localStrategySettings.connection.reconnectMaxSeconds"
+                  label="最大重连间隔 (秒)"
+                  type="number"
+                  min="3"
+                />
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                断线或心跳超时时按指数退避重连，建议保持较长最大间隔以降低风控触发概率。
+              </p>
+            </div>
+
             <div class="flex justify-end gap-2 border-t pt-3 dark:border-gray-700">
               <BaseButton
                 variant="primary"
@@ -1552,7 +1586,7 @@ async function handleTestOffline() {
                   placeholder="接收端 token"
                 />
 
-                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
                   <BaseInput
                     v-model="localOffline.title"
                     label="标题"
@@ -1565,6 +1599,13 @@ async function handleTestOffline() {
                     type="number"
                     min="0"
                     placeholder="0 表示不删除"
+                  />
+                  <BaseInput
+                    v-model.number="localOffline.reloginWatchMinutes"
+                    label="重登录监听 (分钟)"
+                    type="number"
+                    min="1"
+                    max="30"
                   />
                 </div>
 

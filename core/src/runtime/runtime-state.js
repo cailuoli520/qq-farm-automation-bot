@@ -49,6 +49,7 @@ function createRuntimeState(options) {
             plantOrderRandom: store.getPlantOrderRandom(accountId),
             plantDelaySeconds: store.getPlantDelaySeconds(accountId),
             fertilizerDelaySeconds: store.getFertilizerDelaySeconds(accountId),
+            connection: store.getConnectionConfig(accountId),
             knownFriendGids: store.getKnownFriendGids(accountId),
             knownFriendGidSyncCooldownSec: store.getKnownFriendGidSyncCooldownSec(accountId),
             bagSeedPriority: store.getBagSeedPriority(accountId),
