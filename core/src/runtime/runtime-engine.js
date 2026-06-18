@@ -71,6 +71,7 @@ function createRuntimeEngine(options = {}) {
     addAccountLog,
     normalizeStatusForPanel,
     buildConfigSnapshotForAccount,
+    getRuntimeConfig,
     getOfflineAutoDeleteMs,
     triggerOfflineReminder,
     addOrUpdateAccount: store.addOrUpdateAccount,

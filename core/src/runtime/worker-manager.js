@@ -14,6 +14,7 @@ function createWorkerManager(options) {
         addAccountLog,
         normalizeStatusForPanel,
         buildConfigSnapshotForAccount,
+        getRuntimeConfig,
         getOfflineAutoDeleteMs,
         triggerOfflineReminder,
         addOrUpdateAccount,
@@ -93,6 +94,7 @@ function createWorkerManager(options) {
             config: {
                 code: account.code,
                 platform: account.platform,
+                systemConfig: typeof getRuntimeConfig === 'function' ? getRuntimeConfig() : null,
             },
         });
         child.send({ type: 'config_sync', config: buildConfigSnapshotForAccount(account.id) });

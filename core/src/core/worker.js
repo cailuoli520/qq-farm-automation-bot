@@ -3,7 +3,7 @@ const process = require('node:process');
  * 子进程 Worker - 负责运行单个账号的挂机逻辑
  */
 const { parentPort, workerData } = require('node:worker_threads');
-const { CONFIG } = require('../config/config');
+const { CONFIG, updateRuntimeConfig } = require('../config/config');
 const { getLevelExpProgress } = require('../config/gameConfig');
 const { getAutomation, getPreferredSeed, getConfigSnapshot, applyConfigSnapshot, getFertilizerBuyType, getFertilizerBuyCount } = require('../models/store');
 const { checkAndClaimEmails } = require('../services/email');
@@ -453,9 +453,13 @@ async function startBot(config) {
     if (isRunning) return;
     isRunning = true;
 
-    const { code, platform } = config;
+    const { code, platform, systemConfig } = config;
 
+    if (systemConfig && typeof systemConfig === 'object') {
+        updateRuntimeConfig(systemConfig);
+    }
     CONFIG.platform = platform || 'qq';
+    log('系统', `运行配置: platform=${CONFIG.platform}, os=${CONFIG.os}, clientVersion=${CONFIG.clientVersion}`);
     // 注意：间隔配置由 applyIntervalsToRuntime 统一处理，不要在这里覆盖
 
     await loadProto();
