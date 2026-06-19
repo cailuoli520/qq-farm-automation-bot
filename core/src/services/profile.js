@@ -115,11 +115,11 @@ async function getProfileModules() {
         },
         career: {
             status: 'pending_capture',
-            message: 'Career protocol was not present in the current capture. Open the career page and capture again to implement it.',
+            message: '当前抓包里还没有完整个人生涯协议。请打开个人生涯页面并重新抓包后再补齐。',
         },
         goldenBug: {
             status: 'pending_capture',
-            message: 'Golden bug protocol was not present in the current capture. Automated actions are disabled until it is captured.',
+            message: '当前抓包里还没有完整黄金虫专用协议。补齐前不会开放自动操作。',
         },
     };
 }
