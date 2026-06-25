@@ -154,6 +154,7 @@ qq-farm-bot-ui/
 ---
 
 ## 特别感谢
+- 基于[https://github.com/XyhTender/qq-farm-automation-bot]维护修改
 - 基于[Penty-d/qq-farm-bot-ui](https://github.com/Penty-d/qq-farm-bot-ui)二改
 - 核心功能：[linguo2625469/qq-farm-bot](https://github.com/linguo2625469/qq-farm-bot)
 - 部分功能：[QianChenJun/qq-farm-bot](https://github.com/QianChenJun/qq-farm-bot)
