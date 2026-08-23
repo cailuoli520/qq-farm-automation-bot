@@ -6,6 +6,7 @@ const {
     randomIntervalMs,
 } = require('../src/runtime/worker-automation-scheduler');
 const { buildDailyGiftOverview } = require('../src/runtime/worker-daily-gifts');
+const { createWorkerDailyRoutineScheduler } = require('../src/runtime/worker-daily-routine-scheduler');
 const { buildNextChecks, createWorkerStatusSynchronizer } = require('../src/runtime/worker-status-sync');
 
 test('Worker API 调度器统一返回成功、异常和未知方法响应', async () => {
@@ -44,9 +45,15 @@ test('Worker 默认 API 方法表保持与主进程调用契约一致', () => {
         'getSeeds',
         'getBag',
         'getBagSeeds',
+        'getIllustratedSnapshot',
+        'getPetInfo',
+        'deployDog',
+        'withdrawDog',
+        'useDogFood',
         'getDiamondBalance',
         'useItem',
         'sellItems',
+        'setItemsLocked',
         'setAutomation',
         'doFarmOp',
         'buyFertilizer',
@@ -59,6 +66,7 @@ test('Worker 默认 API 方法表保持与主进程调用契约一致', () => {
         'getCurrentStarSandShop',
         'getCurrentSolarTerms',
         'getCurrentQingMeiActivity',
+        'getCurrentQixiActivity',
         'claimBattlePassRewards',
         'exchangeStarSandGoods',
         'lightConstellation',
@@ -67,7 +75,101 @@ test('Worker 默认 API 方法表保持与主进程调用契约一致', () => {
         'startQingMeiBrew',
         'continueQingMeiBrew',
         'settleQingMeiBrew',
+        'claimQixiBridgeRewards',
+        'giftQixiSachet',
+        'getQixiDewTargets',
+        'useQixiDew',
     ]);
+});
+
+test('每日调度在登录就绪后的北京时间跨日依次执行日常和捣蛋', async () => {
+    let dateKey = '2026-08-22';
+    let loginReady = true;
+    let startupTask = null;
+    let intervalTask = null;
+    const events = [];
+    const scheduler = {
+        clear() { return true; },
+        clearAll() {},
+        getSnapshot() { return {}; },
+        getTaskNames() { return []; },
+        has() { return false; },
+        setTimeoutTask(_name, _delay, task) {
+            startupTask = task;
+            return {} as NodeJS.Timeout;
+        },
+        setIntervalTask(_name, _delay, task) {
+            intervalTask = task;
+            return {} as NodeJS.Timeout;
+        },
+    };
+    const runtime = createWorkerDailyRoutineScheduler({
+        getDateKey: () => dateKey,
+        isLoginReady: () => loginReady,
+        runStartupRoutines: async () => { events.push('startup'); },
+        runCrossDayRoutines: async () => {
+            events.push('daily');
+            events.push('bad');
+        },
+        scheduler,
+    });
+
+    runtime.start();
+    assert.equal(typeof startupTask, 'function');
+    assert.equal(typeof intervalTask, 'function');
+    await startupTask();
+    await intervalTask();
+    assert.deepEqual(events, ['startup']);
+
+    dateKey = '2026-08-23';
+    loginReady = false;
+    await intervalTask();
+    assert.deepEqual(events, ['startup']);
+
+    loginReady = true;
+    await intervalTask();
+    await intervalTask();
+    assert.deepEqual(events, ['startup', 'daily', 'bad']);
+
+    dateKey = '2026-08-24';
+    await intervalTask();
+    assert.deepEqual(events, ['startup', 'daily', 'bad', 'daily', 'bad']);
+});
+
+test('启动延迟跨过北京时间零点时不会重复执行跨日日常', async () => {
+    let dateKey = '2026-08-22';
+    let startupTask = null;
+    let intervalTask = null;
+    const events = [];
+    const scheduler = {
+        clear() { return true; },
+        clearAll() {},
+        getSnapshot() { return {}; },
+        getTaskNames() { return []; },
+        has() { return false; },
+        setTimeoutTask(_name, _delay, task) {
+            startupTask = task;
+            return {} as NodeJS.Timeout;
+        },
+        setIntervalTask(_name, _delay, task) {
+            intervalTask = task;
+            return {} as NodeJS.Timeout;
+        },
+    };
+    const runtime = createWorkerDailyRoutineScheduler({
+        getDateKey: () => dateKey,
+        isLoginReady: () => true,
+        runStartupRoutines: async () => { events.push('startup'); },
+        runCrossDayRoutines: async () => { events.push('daily'); },
+        scheduler,
+    });
+
+    runtime.start();
+    dateKey = '2026-08-23';
+    await startupTask();
+    await intervalTask();
+
+    assert.deepEqual(events, ['startup']);
 });
 
 test('Worker 使用物品接口不把 int64 UID 转成不安全的 number', async (t) => {

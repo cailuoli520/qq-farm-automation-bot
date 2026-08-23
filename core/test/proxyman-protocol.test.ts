@@ -11,9 +11,21 @@ test('Farming 请求兼容抓包中的批量土地、好友 GID 和固定字段'
 
     assert.deepEqual(decoded.land_ids.map((id: any) => id.toString()), ['5', '10', '13', '22']);
     assert.equal(decoded.host_gid.toString(), '1244466842');
-    assert.equal(decoded.is_all, false);
+    assert.equal(decoded.field_3, 0);
     assert.equal(decoded.field_4, 2);
     assert.deepEqual(Buffer.from(types.FarmingRequest.encode(decoded).finish()), fixture);
+});
+
+test('自家 Farming 请求显式保留两个为零的场景字段', () => {
+    const request = types.FarmingRequest.create({
+        land_ids: [1, 2],
+        host_gid: 123,
+        field_3: 0,
+        field_4: 0,
+    });
+    const encoded = Buffer.from(types.FarmingRequest.encode(request).finish());
+
+    assert.deepEqual(encoded.subarray(-4), Buffer.from([0x18, 0x00, 0x20, 0x00]));
 });
 
 test('Farming 回复保留同一土地的多次帮忙操作结果', () => {

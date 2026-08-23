@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const test = require('node:test');
-const { createWorkerManager } = require('../src/runtime/worker-manager');
+const { createWorkerManager, workerApiTimeout } = require('../src/runtime/worker-manager');
 
 class FakeScheduler {
     tasks: Map<string, any>;
@@ -101,6 +101,14 @@ function createHarness() {
 function settleEvents() {
     return new Promise(resolve => setImmediate(resolve));
 }
+
+test('新增多请求 API 使用覆盖完整请求链的主进程超时', () => {
+    assert.equal(workerApiTimeout('getIllustratedSnapshot'), 90000);
+    assert.equal(workerApiTimeout('getPetInfo'), 90000);
+    assert.equal(workerApiTimeout('useDogFood'), 150000);
+    assert.equal(workerApiTimeout('setItemsLocked'), 150000);
+    assert.equal(workerApiTimeout('getBag'), 10000);
+});
 
 test('Worker 启动只允许一个实例并发送启动与配置快照', () => {
     const harness = createHarness();

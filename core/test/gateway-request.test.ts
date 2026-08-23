@@ -4,6 +4,7 @@ const { loadProto, types } = require('../src/utils/proto');
 const {
     generateGatewayRequestToken,
     encodeGatewayRequest,
+    GatewayTokenProvider,
 } = require('../src/utils/gateway-request');
 
 const TOKEN_PATTERN = /^[a-z0-9]{64,127}=$/i;
@@ -52,5 +53,23 @@ test('网关封包使用字段 3 携带请求 token', () => {
     assert.match(first.token, TOKEN_PATTERN);
     assert.match(second.token, TOKEN_PATTERN);
     assert.notEqual(first.token, second.token);
+});
+
+test('TSDK 初始化凭据仅供下一条请求使用', () => {
+    const provider = new GatewayTokenProvider();
+    const initToken = `${'A'.repeat(150)}==`;
+
+    assert.equal(provider.stageInitToken(initToken), initToken.length);
+    assert.equal(provider.next(), initToken);
+    assert.match(provider.next(), TOKEN_PATTERN);
+
+    provider.stageInitToken(initToken);
+    provider.clear();
+    assert.notEqual(provider.next(), initToken);
+});
+
+test('拒绝无效的 TSDK 初始化凭据', () => {
+    const provider = new GatewayTokenProvider();
+    assert.throws(() => provider.stageInitToken('token with spaces'), /格式无效/);
 });
 export {};

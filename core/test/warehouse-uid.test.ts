@@ -29,5 +29,18 @@ test('未指定 UID 时按多个真实背包堆拆分使用数量', () => {
 test('物品使用计划拒绝 UID 不匹配或数量不足', () => {
     assert.throws(() => planItemUse([
         { id: 90001, count: 5, uid: '101' },
-    ], 90001, 1, '102'), /物品数量不足/);
+    ], 90001, 1, '102'), /物品(?:可用)?数量不足/);
+});
+
+test('物品使用计划跳过已锁定堆并保留完整 int64 UID', () => {
+    const result = planItemUse([
+        { id: 20001, count: 4, uid: '9223372036854775806', locked: true },
+        { id: 20001, count: 3, uid: '9223372036854775805', locked: false },
+    ], 20001, 3);
+    assert.deepEqual(result, [
+        { itemId: 20001, count: 3, uid: '9223372036854775805' },
+    ]);
+    assert.throws(() => planItemUse([
+        { id: 20001, count: 4, uid: '9223372036854775806', locked: true },
+    ], 20001, 1), /另有 4 个已锁定/);
 });

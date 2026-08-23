@@ -9,6 +9,7 @@ const {
     findEmptyLandQuads,
     getDisplayLandContext,
     getLandLifecycleState,
+    getPlantInteractionEffects,
     getLandTypeByLevel,
     normalizeFertilizerLandTypes,
 } = require('../src/services/farm-land-domain');
@@ -26,6 +27,46 @@ test('四格作物全空时选择六组标准分区并将左下主格放在首�
         [21, 17, 18, 22],
         [23, 19, 20, 24],
     ]);
+});
+
+test('仅把当前黄金虫和足球状态识别为农场主可清理互动', () => {
+    const plant = {
+        interaction_uses: [
+            { item_id: 301101, host_gid: 7, timestamp: 100 },
+            { item_id: 301103, host_gid: 7, timestamp: 101 },
+        ],
+        interaction_targets: [
+            { item_id: 301102, host_gid: 8, timestamp: 102, land_id: 4 },
+        ],
+        // 历史扩展记录不能被误判为当前仍生效的黄金虫或足球。
+        field_40: [{ value_1: 1, value_2: 1 }, { value_1: 2, value_2: 1 }],
+    };
+    const effects = getPlantInteractionEffects(plant);
+
+    assert.deepEqual(effects.map(effect => effect.itemId), ['301101', '301103', '301102']);
+    assert.deepEqual(effects.filter(effect => effect.cleanable).map(effect => effect.itemId), ['301101', '301102']);
+
+    const result = analyzeLands([
+        { id: 4, unlocked: true, plant: { id: 20004, phases: [phase(4)], ...plant } },
+        {
+            id: 5,
+            unlocked: true,
+            plant: { id: 20005, phases: [phase(4)], field_40: [{ value_1: 1, value_2: 1 }] },
+        },
+    ]);
+    assert.deepEqual(result.needInteractionCleanup, [4]);
+});
+
+test('成对返回的互动 use 和 target 合并为一条当前效果', () => {
+    const effects = getPlantInteractionEffects({
+        interaction_uses: [{ item_id: 301101, host_gid: 7, timestamp: 100, effect_type: 2 }],
+        interaction_targets: [{ item_id: 301101, host_gid: 7, timestamp: 100, land_id: 4 }],
+    });
+
+    assert.equal(effects.length, 1);
+    assert.equal(effects[0].itemId, '301101');
+    assert.equal(effects[0].landId, '4');
+    assert.equal(effects[0].effectType, 2);
 });
 
 test('四格作物在部分占用时选择最多的不重叠偏移组合', () => {

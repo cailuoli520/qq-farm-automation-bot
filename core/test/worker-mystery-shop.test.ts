@@ -28,6 +28,12 @@ function createHarness(overrides = {}) {
     const logs = [];
     let active = true;
     let enabled = true;
+    let automation = {
+        mystery_shop_buy: true,
+        mystery_shop_allow_gold: true,
+        mystery_shop_arrival_notify: false,
+        mystery_shop_purchase_notify: false,
+    };
     let buyCalls = 0;
     const offer = createOffer();
     const service = {
@@ -48,7 +54,8 @@ function createHarness(overrides = {}) {
     };
     const runtime = createWorkerMysteryShopRuntime({
         events,
-        getAutomation: () => ({ mystery_shop_buy: enabled }),
+        getAutomation: () => ({ ...automation, mystery_shop_buy: enabled }),
+        getCurrencyBalance: () => '100000',
         isLifecycleActive: () => active,
         log: (tag, message, meta) => logs.push({ tag, message, meta }),
         now: () => 1786870000 * 1000,
@@ -62,6 +69,7 @@ function createHarness(overrides = {}) {
         buyCalls: () => buyCalls,
         setActive(value) { active = value; },
         setEnabled(value) { enabled = value; },
+        setAutomation(value) { automation = { ...automation, ...value }; },
     };
 }
 
@@ -134,6 +142,140 @@ test('过期商品和已停止 Worker 都不会下单', async (t) => {
     harness.setActive(false);
     assert.equal((await harness.runtime.handleOffer(harness.offer)).outcome, 'stopped');
     assert.equal(harness.buyCalls(), 0);
+});
+
+test('未允许币种、余额未知和余额不足时不会下单', async (t) => {
+    const disallowed = createHarness();
+    t.after(() => disallowed.runtime.stop());
+    disallowed.setAutomation({ mystery_shop_allow_gold: false });
+    assert.equal((await disallowed.runtime.handleOffer(disallowed.offer)).outcome, 'currency_not_allowed');
+
+    const unknown = createHarness({});
+    t.after(() => unknown.runtime.stop());
+    const unknownRuntime = createWorkerMysteryShopRuntime({
+        events: unknown.events,
+        getAutomation: () => ({ mystery_shop_buy: true, mystery_shop_allow_gold: true }),
+        getCurrencyBalance: () => null,
+        isLifecycleActive: () => true,
+        log: () => {},
+        now: () => 1786870000 * 1000,
+        service: {
+            async buyNpcGoods() { throw new Error('不应购买'); },
+            async getActiveNPC() { return unknown.offer; },
+            mysteryRewards: value => value?.rewards || [],
+            normalizeMysteryShopOffer: value => value?.key ? value : null,
+        },
+    });
+    t.after(() => unknownRuntime.stop());
+    assert.equal((await unknownRuntime.handleOffer(unknown.offer)).outcome, 'balance_unknown');
+
+    const insufficient = createWorkerMysteryShopRuntime({
+        events: unknown.events,
+        getAutomation: () => ({ mystery_shop_buy: true, mystery_shop_allow_gold: true }),
+        getCurrencyBalance: () => '39999',
+        isLifecycleActive: () => true,
+        log: () => {},
+        now: () => 1786870000 * 1000,
+        service: {
+            async buyNpcGoods() { throw new Error('不应购买'); },
+            async getActiveNPC() { return unknown.offer; },
+            mysteryRewards: value => value?.rewards || [],
+            normalizeMysteryShopOffer: value => value?.key ? value : null,
+        },
+    });
+    t.after(() => insufficient.stop());
+    assert.equal((await insufficient.handleOffer(unknown.offer)).outcome, 'insufficient');
+});
+
+test('余额不足时仍发送到货提醒', async (t) => {
+    const notifications = [];
+    const harness = createHarness();
+    const runtime = createWorkerMysteryShopRuntime({
+        events: harness.events,
+        getAutomation: () => ({
+            mystery_shop_buy: true,
+            mystery_shop_allow_gold: true,
+            mystery_shop_arrival_notify: true,
+        }),
+        getCurrencyBalance: () => '1',
+        isLifecycleActive: () => true,
+        log: () => {},
+        notify: (title, content) => notifications.push({ title, content }),
+        now: () => 1786870000 * 1000,
+        service: {
+            async buyNpcGoods() { throw new Error('余额不足时不应购买'); },
+            async getActiveNPC() { return harness.offer; },
+            mysteryRewards: value => value?.rewards || [],
+            normalizeMysteryShopOffer: value => value?.key ? value : null,
+        },
+    });
+    t.after(() => runtime.stop());
+
+    assert.equal((await runtime.handleOffer(harness.offer)).outcome, 'insufficient');
+    assert.equal((await runtime.handleOffer(harness.offer)).outcome, 'insufficient');
+    assert.equal(notifications.length, 1);
+    assert.match(notifications[0].title, /到货/);
+});
+
+test('提醒发送失败不改变已完成购买结果', async (t) => {
+    const harness = createHarness();
+    const runtime = createWorkerMysteryShopRuntime({
+        events: harness.events,
+        getAutomation: () => ({
+            mystery_shop_buy: true,
+            mystery_shop_allow_gold: true,
+            mystery_shop_purchase_notify: true,
+        }),
+        getCurrencyBalance: () => '100000',
+        isLifecycleActive: () => true,
+        log: () => {},
+        notify: async () => { throw new Error('推送渠道不可用'); },
+        now: () => 1786870000 * 1000,
+        service: {
+            async buyNpcGoods() { return { rewards: [{ id: '21135', count: '8', name: '艾草种子' }] }; },
+            async getActiveNPC() { return harness.offer; },
+            mysteryRewards: value => value?.rewards || [],
+            normalizeMysteryShopOffer: value => value?.key ? value : null,
+        },
+    });
+    t.after(() => runtime.stop());
+
+    assert.equal((await runtime.handleOffer(harness.offer)).outcome, 'purchased');
+    assert.equal((await runtime.handleOffer(harness.offer)).outcome, 'duplicate');
+});
+
+test('到货和购买提醒按同一轮商品去重', async (t) => {
+    const notifications = [];
+    const harness = createHarness();
+    harness.setAutomation({
+        mystery_shop_arrival_notify: true,
+        mystery_shop_purchase_notify: true,
+    });
+    const runtime = createWorkerMysteryShopRuntime({
+        events: harness.events,
+        getAutomation: () => ({
+            mystery_shop_buy: true,
+            mystery_shop_allow_gold: true,
+            mystery_shop_arrival_notify: true,
+            mystery_shop_purchase_notify: true,
+        }),
+        getCurrencyBalance: () => '100000',
+        isLifecycleActive: () => true,
+        log: () => {},
+        notify: (title, content) => notifications.push({ title, content }),
+        now: () => 1786870000 * 1000,
+        service: {
+            async buyNpcGoods() { return { rewards: [{ id: '21135', count: '8', name: '艾草种子' }] }; },
+            async getActiveNPC() { return harness.offer; },
+            mysteryRewards: value => value?.rewards || [],
+            normalizeMysteryShopOffer: value => value?.key ? value : null,
+        },
+    });
+    t.after(() => runtime.stop());
+    assert.equal((await runtime.handleOffer(harness.offer)).outcome, 'purchased');
+    assert.equal((await runtime.handleOffer(harness.offer)).outcome, 'duplicate');
+    assert.equal(notifications.length, 1);
+    assert.match(notifications[0].title, /自动购买/);
 });
 
 export {};

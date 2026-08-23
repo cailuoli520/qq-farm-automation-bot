@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { createFriendOperationLimitTracker } = require('../src/services/friend-operation-limits');
+const { createFriendOperationLimitTracker, getBeijingDateKey } = require('../src/services/friend-operation-limits');
 
 function createHarness(initialDate = '2026-08-15') {
     let dateKey = initialDate;
@@ -24,6 +24,11 @@ function createHarness(initialDate = '2026-08-15') {
         setDate(nextDate) { dateKey = nextDate; },
     };
 }
+
+test('北京时间日期键在 UTC 16 点跨日', () => {
+    assert.equal(getBeijingDateKey(Date.parse('2026-08-22T15:59:59Z') / 1000), '2026-08-22');
+    assert.equal(getBeijingDateKey(Date.parse('2026-08-22T16:00:00Z') / 1000), '2026-08-23');
+});
 
 test('好友操作额度统一计算剩余次数和经验可用性', () => {
     const { tracker } = createHarness();

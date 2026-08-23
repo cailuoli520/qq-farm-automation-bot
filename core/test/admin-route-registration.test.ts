@@ -69,8 +69,14 @@ test('农场与好友路由按原有顺序完整注册', () => {
         'DELETE /api/plant-blacklist',
         'GET /api/seeds',
         'GET /api/bag',
+        'GET /api/illustrated',
+        'GET /api/pets',
+        'POST /api/pets/deploy',
+        'POST /api/pets/withdraw',
+        'POST /api/pets/food/use',
         'POST /api/bag/use',
         'POST /api/bag/sell',
+        'POST /api/bag/lock',
         'GET /api/bag/seeds',
         'GET /api/daily-gifts',
         'POST /api/accounts/:id/start',
@@ -78,6 +84,42 @@ test('农场与好友路由按原有顺序完整注册', () => {
         'POST /api/farm/operate',
         'GET /api/analytics',
     ]);
+});
+
+test('数据分析路由可从编译目录加载分析服务', async () => {
+    const { app, handlers } = createAppRecorder();
+
+    registerGameplayRoutes({
+        addOrUpdateAccount: value => value,
+        adminLogger: { info() {}, warn() {} },
+        app,
+        authRequired: middleware,
+        checkAccountAccess: accessAllowed,
+        getAccountId,
+        handleApiError,
+        provider: {},
+        resolveAccountId: value => String(value || ''),
+        store: {},
+        wxLoginAdapter: {},
+    });
+
+    const response = {
+        payload: null,
+        statusCode: 200,
+        status(code) {
+            this.statusCode = code;
+            return this;
+        },
+        json(payload) {
+            this.payload = payload;
+            return this;
+        },
+    };
+    await handlers.get('GET /api/analytics')({ query: { sort: 'exp' } }, response);
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.payload.ok, true);
+    assert.equal(Array.isArray(response.payload.data), true);
 });
 
 test('用户、日志与二维码路由完整注册', () => {
@@ -249,6 +291,8 @@ test('活动路由只保留活动中心操作，不再暴露神秘商人手动�
         'GET /api/activity-center/shop',
         'GET /api/activity-center/solar-terms',
         'GET /api/activity-center/qingmei',
+        'GET /api/activity-center/qixi',
+        'GET /api/activity-center/qixi/dew/targets',
         'POST /api/activity-center/pass/claim',
         'POST /api/activity-center/constellation/light',
         'POST /api/activity-center/shop/exchange',
@@ -257,6 +301,9 @@ test('活动路由只保留活动中心操作，不再暴露神秘商人手动�
         'POST /api/activity-center/qingmei/brew/start',
         'POST /api/activity-center/qingmei/brew/continue',
         'POST /api/activity-center/qingmei/brew/settle',
+        'POST /api/activity-center/qixi/bridge/claim',
+        'POST /api/activity-center/qixi/gift',
+        'POST /api/activity-center/qixi/dew/use',
     ]);
     assert.equal(routes.some(route => route.includes('mystery-shop')), false);
 });
