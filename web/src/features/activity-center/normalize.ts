@@ -9,6 +9,8 @@ import type {
   ConstellationNodeDto,
   ConstellationVisualState,
   QingMeiActivityDto,
+  QixiActivityDto,
+  QixiDewTargetsDto,
   SeasonDto,
   ShopDto,
   SolarTermsDto,
@@ -450,18 +452,124 @@ export function normalizeActivitySnapshot(value: unknown): ActivityCenterSnapsho
     solarTerms: normalizeSolarTerms(first(root.solarTerms, root.solar_terms, root.solar)),
     constellation: normalizeConstellation(first(root.constellation, root.constellationActivity, seasonRecord.constellation, seasonRecord.constellationActivity, seasonRecord.starContract, seasonRecord.contract)),
     qingMei: normalizeQingMei(first(root.qingMei, root.qingmei, root.qing_mei)),
+    qixi: normalizeQixi(first(root.qixi, root.qixiActivity, root.qixi_activity)),
     actions: {
       claimPass: normalizeAction(actionsRaw, capabilitiesRaw, ['claimPass', 'passClaim', 'pass_claim']),
       lightConstellation: normalizeAction(actionsRaw, capabilitiesRaw, ['lightConstellation', 'constellationLight', 'constellation_light']),
       claimSolar: normalizeAction(actionsRaw, capabilitiesRaw, ['claimSolar', 'solarClaim', 'solar_claim']),
       exchange: normalizeAction(actionsRaw, capabilitiesRaw, ['exchange', 'shopExchange', 'shop_exchange']),
+      qixiBridge: normalizeAction(actionsRaw, capabilitiesRaw, ['qixiBridge', 'qixi_bridge']),
+      qixiGift: normalizeAction(actionsRaw, capabilitiesRaw, ['qixiGift', 'qixi_gift']),
+      qixiDew: normalizeAction(actionsRaw, capabilitiesRaw, ['qixiDew', 'qixi_dew']),
     },
     errors: {
       season: text(errorsRaw.season) || null,
       shop: text(errorsRaw.shop) || null,
       solarTerms: text(errorsRaw.solarTerms, errorsRaw.solar_terms) || null,
       qingMei: text(errorsRaw.qingMei, errorsRaw.qingmei, errorsRaw.qing_mei) || null,
+      qixi: text(errorsRaw.qixi) || null,
     },
+  }
+}
+
+function normalizeQixi(value: unknown): QixiActivityDto | null {
+  if (!isRecord(value))
+    return null
+  const raw = value
+  const balances = record(raw.balances)
+  const bridge = record(raw.bridge)
+  const gift = record(raw.gift)
+  const dew = record(raw.dew)
+  const actions = record(raw.actions)
+  const dewBalance = first(dew.balance, balances.dew)
+  return {
+    groupId: text(raw.groupId, raw.group_id),
+    activityId: text(raw.activityId, raw.activity_id),
+    bridgeActivityId: text(raw.bridgeActivityId, raw.bridge_activity_id, raw.activityId),
+    giftActivityId: text(raw.giftActivityId, raw.gift_activity_id),
+    name: text(raw.name, raw.title, '鹊桥寄情'),
+    startTime: toMilliseconds(first(raw.startTime, raw.start_time)),
+    endTime: toMilliseconds(first(raw.endTime, raw.end_time)),
+    serverTime: toMilliseconds(first(raw.serverTime, raw.server_time)),
+    active: bool(raw.active),
+    rules: normalizeRules(raw.rules),
+    feather: normalizeItem(raw.feather),
+    sachet: normalizeItem(raw.sachet),
+    receivedSachet: normalizeItem(first(raw.receivedSachet, raw.received_sachet)),
+    dew: {
+      ...normalizeItem(dew),
+      balance: dewBalance === null || dewBalance === undefined ? null : text(dewBalance),
+      balanceKnown: bool(dew.balanceKnown, dew.balance_known, balances.known),
+      usable: bool(dew.usable),
+    },
+    balances: {
+      feather: balances.feather === null || balances.feather === undefined ? null : text(balances.feather),
+      sachet: balances.sachet === null || balances.sachet === undefined ? null : text(balances.sachet),
+      receivedSachet: balances.receivedSachet === null || balances.receivedSachet === undefined ? null : text(balances.receivedSachet),
+      dew: balances.dew === null || balances.dew === undefined ? null : text(balances.dew),
+      known: bool(balances.known),
+    },
+    bridge: {
+      currentStage: finiteNumber(first(bridge.currentStage, bridge.current_stage)) || 0,
+      claimable: bool(bridge.claimable),
+      displayItems: records(first(bridge.displayItems, bridge.display_items)).map(normalizeItem),
+      stages: records(bridge.stages).map((stage, index) => ({
+        id: text(stage.id, stage.stage, index + 1),
+        stage: finiteNumber(first(stage.stage, index + 1)) || index + 1,
+        statusCode: text(stage.statusCode, stage.status_code, stage.status),
+        completed: bool(stage.completed),
+        claimed: bool(stage.claimed),
+        claimable: bool(stage.claimable),
+        current: bool(stage.current),
+        cost: normalizeItem(stage.cost),
+        rewards: records(stage.rewards).map(normalizeItem),
+      })),
+    },
+    gift: {
+      sentCount: text(gift.sentCount, gift.sent_count, '0'),
+      sendLimit: text(gift.sendLimit, gift.send_limit, '0'),
+      receiveLimit: text(gift.receiveLimit, gift.receive_limit, '0'),
+      messageTextId: text(gift.messageTextId, gift.message_text_id, '15'),
+    },
+    actions: {
+      bridge: normalizeAction(actions, {}, ['bridge']),
+      gift: normalizeAction(actions, {}, ['gift']),
+      dew: normalizeAction(actions, {}, ['dew']),
+    },
+  }
+}
+
+export function normalizeQixiDewTargets(value: unknown): QixiDewTargetsDto | null {
+  if (!isRecord(value))
+    return null
+  const raw = value
+  const host = record(raw.host)
+  const lands = records(raw.lands).map(land => ({
+    landId: text(land.landId, land.land_id, land.id),
+    hostGid: text(land.hostGid, land.host_gid, host.gid),
+    ownerName: text(land.ownerName, land.owner_name, host.name),
+    isSelf: bool(land.isSelf, land.is_self, host.isSelf, host.is_self),
+    plantId: text(land.plantId, land.plant_id),
+    plantName: text(land.plantName, land.plant_name, '未知作物'),
+    seedId: text(land.seedId, land.seed_id),
+    seedImage: text(land.seedImage, land.seed_image),
+    phaseCode: finiteNumber(first(land.phaseCode, land.phase_code)) || 0,
+    phaseName: text(land.phaseName, land.phase_name),
+    mature: bool(land.mature),
+    occupiedLandIds: Array.isArray(first(land.occupiedLandIds, land.occupied_land_ids))
+      ? (first(land.occupiedLandIds, land.occupied_land_ids) as unknown[]).map(value => text(value)).filter(Boolean)
+      : [],
+  })).filter(land => land.landId)
+  return {
+    host: {
+      gid: text(host.gid),
+      name: text(host.name, host.remark),
+      avatarUrl: text(host.avatarUrl, host.avatar_url),
+      isSelf: bool(host.isSelf, host.is_self),
+    },
+    lands,
+    count: finiteNumber(raw.count) ?? lands.length,
+    serverValidationRequired: bool(raw.serverValidationRequired, raw.server_validation_required),
   }
 }
 
@@ -527,6 +635,20 @@ const activityErrorMessages: Record<string, string> = {
   SHOP_BALANCE_UNAVAILABLE: '暂时无法确认星砂余额，请稍后重试',
   INSUFFICIENT_STAR_SAND: '星砂余额不足，无法完成本次兑换',
   SHOP_RESPONSE_INVALID: '商店数据已经变化，请刷新页面后重试',
+  QIXI_UNAVAILABLE: '鹊桥寄情活动暂未开放或已经结束',
+  QIXI_BRIDGE_UNAVAILABLE: '当前没有可领取的鹊桥奖励',
+  QIXI_GIFT_UNAVAILABLE: '当前无法赠送鹊羽香囊',
+  INVALID_QIXI_FRIEND_GID: '好友信息无效，请重新选择',
+  INVALID_QIXI_MESSAGE_TEXT_ID: '祝福文案信息无效，请刷新活动后重试',
+  QIXI_RESPONSE_INVALID: '鹊桥活动数据已经变化，请刷新后重试',
+  QIXI_DEW_ACCOUNT_UNAVAILABLE: '当前账号尚未就绪，请稍后重试',
+  INVALID_QIXI_DEW_HOST_GID: '农场主人信息无效，请重新选择',
+  INVALID_QIXI_DEW_LAND_ID: '地块信息无效，请刷新后重选',
+  QIXI_DEW_UNAVAILABLE: '活动未进行，鹊羽灵露当前不可使用',
+  INSUFFICIENT_QIXI_DEW: '背包中没有可用的鹊羽灵露',
+  QIXI_DEW_HOST_MISMATCH: '进入的农场与所选好友不一致，请刷新后重试',
+  QIXI_DEW_TARGET_UNAVAILABLE: '所选地块已不再可用，请刷新后重选',
+  QIXI_DEW_NO_EFFECT: '该地块未触发灵露效果，作物品级或状态可能不符合条件',
   SEASON_UNAVAILABLE: '当前活动数据暂未开放，请稍后刷新重试',
   INVALID_SOLAR_TERM: '节令信息已失效，请刷新页面后重试',
   ACCOUNT_OFFLINE: '当前账号尚未运行，请先启动账号后再试',

@@ -40,3 +40,11 @@ export async function postActivityMutation(path: string, accountId: string, payl
     responseData: response.data,
   }
 }
+
+export async function fetchQixiDewTargetsRequest(accountId: string, hostGid = ''): Promise<unknown> {
+  const response = await api.get('/api/activity-center/qixi/dew/targets', {
+    ...requestOptions(accountId),
+    params: hostGid ? { hostGid } : {},
+  })
+  return responsePayload(response.data)
+}

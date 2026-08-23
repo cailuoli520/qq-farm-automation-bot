@@ -10,6 +10,7 @@ import ActivityShell from '@/components/activity/ActivityShell.vue'
 import BottomNav from '@/components/activity/BottomNav.vue'
 import ConstellationTab from '@/components/activity/ConstellationTab.vue'
 import QingMeiTab from '@/components/activity/QingMeiTab.vue'
+import QixiTab from '@/components/activity/QixiTab.vue'
 import SolarTermsTab from '@/components/activity/SolarTermsTab.vue'
 import StarSandExchangeDialog from '@/components/activity/StarSandExchangeDialog.vue'
 import StarSandShopTab from '@/components/activity/StarSandShopTab.vue'
@@ -17,30 +18,35 @@ import TravelPassTab from '@/components/activity/TravelPassTab.vue'
 import { activityTabByKey, activityTabs } from '@/features/activity-center/registry'
 import { useAccountStore } from '@/stores/account'
 import { useActivityCenterStore } from '@/stores/activity-center'
+import { useFriendStore } from '@/stores/friend'
 
 const router = useRouter()
 const accountStore = useAccountStore()
 const activityStore = useActivityCenterStore()
+const friendStore = useFriendStore()
 const { currentAccountId } = storeToRefs(accountStore)
-const { season, shop, solarTerms, constellation, qingMei, actions, tabBadges, loading, error, actionError, notice, serverClockOffset, pendingActions, successfulAccountId } = storeToRefs(activityStore)
+const { season, shop, solarTerms, constellation, qingMei, qixi, actions, tabBadges, loading, error, actionError, notice, serverClockOffset, pendingActions, successfulAccountId, dewTargets, dewTargetsLoading, dewTargetsError } = storeToRefs(activityStore)
+const { friends, loading: friendsLoading } = storeToRefs(friendStore)
 const activeTab = ref<ActivityTab>('travel')
 const selectedShopGoods = ref<ShopGoodsDto | null>(null)
 const clockNow = ref(Date.now())
 let clockTimer: number | undefined
 
-const currentData = computed(() => activeTab.value === 'shop' ? shop.value : activeTab.value === 'solar' ? solarTerms.value : activeTab.value === 'constellation' ? constellation.value : activeTab.value === 'qingmei' ? qingMei.value : season.value)
+const currentData = computed(() => activeTab.value === 'shop' ? shop.value : activeTab.value === 'solar' ? solarTerms.value : activeTab.value === 'constellation' ? constellation.value : activeTab.value === 'qingmei' ? qingMei.value : activeTab.value === 'qixi' ? qixi.value : season.value)
 const serverNow = computed(() => clockNow.value + serverClockOffset.value)
-const pageTitle = computed(() => activeTab.value === 'qingmei' ? (qingMei.value?.name || '青酿换万金') : currentData.value && 'title' in currentData.value ? currentData.value.title : (season.value?.title || '—'))
+const pageTitle = computed(() => activeTab.value === 'qingmei' ? (qingMei.value?.name || '青酿换万金') : activeTab.value === 'qixi' ? (qixi.value?.name || '鹊桥寄情') : currentData.value && 'title' in currentData.value ? currentData.value.title : (season.value?.title || '—'))
 const activeTabDefinition = computed(() => activityTabByKey[activeTab.value])
 const activityDataReady = computed(() => !!currentAccountId.value && successfulAccountId.value === String(currentAccountId.value))
 const visibleActivityTabs = computed(() => {
   if (!activityDataReady.value)
-    return activityTabs
+    return activityTabs.filter(tab => tab.key !== 'qixi')
   return activityTabs.filter((tab) => {
     if (tab.key === 'constellation')
       return !!constellation.value && (!constellation.value.endTime || constellation.value.endTime > serverNow.value)
     if (tab.key === 'qingmei')
       return !!qingMei.value && (!qingMei.value.endTime || qingMei.value.endTime > serverNow.value)
+    if (tab.key === 'qixi')
+      return !!qixi.value?.active && (!qixi.value.endTime || qixi.value.endTime > serverNow.value)
     return true
   })
 })
@@ -54,6 +60,8 @@ const endTime = computed(() => {
     return season.value?.endTime
   if (activeTab.value === 'qingmei')
     return qingMei.value?.endTime
+  if (activeTab.value === 'qixi')
+    return qixi.value?.endTime
   return season.value?.endTime
 })
 const remaining = computed(() => {
@@ -80,6 +88,11 @@ function claimQingMeiSeed() { activityStore.claimQingMeiSeed(accountId()) }
 function startQingMeiBrew(ingredients: Array<{ uid: string, count: number }>) { activityStore.startQingMeiBrew(accountId(), ingredients) }
 function continueQingMeiBrew() { activityStore.continueQingMeiBrew(accountId()) }
 function settleQingMeiBrew() { activityStore.settleQingMeiBrew(accountId()) }
+function claimQixiBridge() { activityStore.claimQixiBridgeRewards(accountId()) }
+function giftQixiSachet(friendGid: string) { activityStore.giftQixiSachet(accountId(), friendGid) }
+function loadQixiDewTargets(hostGid: string) { activityStore.fetchQixiDewTargets(accountId(), hostGid) }
+function useQixiDew(hostGid: string, landId: string) { activityStore.useQixiDew(accountId(), hostGid, landId) }
+function refreshQixiFriends() { friendStore.fetchFriends(accountId(), true) }
 function selectShopGoods(goods: ShopGoodsDto) { selectedShopGoods.value = goods }
 function closeExchangeDialog() {
   if (!pendingActions.value.exchange)
@@ -91,10 +104,19 @@ async function exchangeShopGoods(goodsId: string, count: number) {
     selectedShopGoods.value = null
 }
 
-watch(currentAccountId, () => { selectedShopGoods.value = null; load(true) }, { flush: 'post' })
-watch(activeTab, (tab) => {
+watch(currentAccountId, () => { selectedShopGoods.value = null; activityStore.clearQixiDewTargets(); load(true) }, { flush: 'post' })
+watch(activeTab, async (tab) => {
   if (tab !== 'shop' && !pendingActions.value.exchange)
     selectedShopGoods.value = null
+  if (tab === 'qixi') {
+    await Promise.allSettled([
+      activityStore.fetchQixiDewTargets(accountId(), ''),
+      friendStore.fetchFriends(accountId()),
+    ])
+  }
+  else {
+    activityStore.clearQixiDewTargets()
+  }
 })
 watch(() => visibleActivityTabs.value.map(tab => tab.key).join(','), () => {
   if (!visibleActivityTabs.value.some(tab => tab.key === activeTab.value))
@@ -114,7 +136,7 @@ onUnmounted(() => {
       <div v-if="!currentAccountId" class="activity-state">
         <strong>请先选择账号</strong><span>活动数据按当前账号加载</span>
       </div>
-      <div v-else-if="loading && !season && !shop && !solarTerms && !constellation && !qingMei" class="activity-state">
+      <div v-else-if="loading && !season && !shop && !solarTerms && !constellation && !qingMei && !qixi" class="activity-state">
         <div class="activity-spinner" /><strong>正在加载活动</strong>
       </div>
       <template v-else>
@@ -128,7 +150,24 @@ onUnmounted(() => {
           <ConstellationTab v-else-if="activeTab === 'constellation'" :constellation="constellation" :enabled="actions.lightConstellation.enabled" :pending="pendingActions.lightConstellation" @light="lightConstellation" />
           <StarSandShopTab v-else-if="activeTab === 'shop'" :shop="shop" :enabled="actions.exchange.enabled" :pending="pendingActions.exchange" @select="selectShopGoods" />
           <SolarTermsTab v-else-if="activeTab === 'solar'" :solar="solarTerms" :now="serverNow" :pending="pendingActions.claimSolar" @claim="claimSolar" />
-          <QingMeiTab v-else :activity="qingMei" :pending-seed="pendingActions.qingMeiSeed" :pending-start="pendingActions.qingMeiStart" :pending-continue="pendingActions.qingMeiContinue" :pending-settle="pendingActions.qingMeiSettle" @claim-seed="claimQingMeiSeed" @start="startQingMeiBrew" @continue="continueQingMeiBrew" @settle="settleQingMeiBrew" />
+          <QingMeiTab v-else-if="activeTab === 'qingmei'" :activity="qingMei" :pending-seed="pendingActions.qingMeiSeed" :pending-start="pendingActions.qingMeiStart" :pending-continue="pendingActions.qingMeiContinue" :pending-settle="pendingActions.qingMeiSettle" @claim-seed="claimQingMeiSeed" @start="startQingMeiBrew" @continue="continueQingMeiBrew" @settle="settleQingMeiBrew" />
+          <QixiTab
+            v-else
+            :activity="qixi"
+            :friends="friends"
+            :friends-loading="friendsLoading"
+            :dew-targets="dewTargets"
+            :dew-targets-loading="dewTargetsLoading"
+            :dew-targets-error="dewTargetsError"
+            :pending-bridge="pendingActions.qixiBridge"
+            :pending-gift="pendingActions.qixiGift"
+            :pending-dew="pendingActions.qixiDew"
+            @claim-bridge="claimQixiBridge"
+            @gift="giftQixiSachet"
+            @load-dew-targets="loadQixiDewTargets"
+            @use-dew="useQixiDew"
+            @refresh-friends="refreshQixiFriends"
+          />
         </main>
       </template>
       <BottomNav v-model="activeTab" :badges="tabBadges" :items="visibleActivityTabs" />

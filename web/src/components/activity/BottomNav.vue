@@ -29,6 +29,7 @@ defineEmits<{
     >
       <span class="activity-nav__visual">
         <span v-if="item.key === 'qingmei'" class="activity-nav__qingmei" aria-hidden="true">🍶</span>
+        <span v-else-if="item.key === 'qixi'" class="activity-nav__qixi" aria-hidden="true">🌉</span>
         <img v-else :src="`/activity-center/stellar/nav-${item.key}.png`" alt="">
         <i v-if="badges[item.key]" class="activity-nav__badge" aria-label="有可操作内容" />
       </span>
@@ -85,11 +86,20 @@ button {
 .activity-nav__item--qingmei {
   --nav-image-offset-y: 7px;
 }
+.activity-nav__item--qixi {
+  --nav-image-offset-y: 7px;
+}
 .activity-nav__qingmei {
   margin-top: 8px;
   font-size: 38px;
   line-height: 1;
   filter: drop-shadow(0 2px 3px rgba(25, 71, 45, 0.45));
+}
+.activity-nav__qixi {
+  margin-top: 8px;
+  font-size: 36px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(83, 42, 74, 0.45));
 }
 
 .activity-nav__visual {

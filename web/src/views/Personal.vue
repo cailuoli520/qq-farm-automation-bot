@@ -2,9 +2,11 @@
 import { ref } from 'vue'
 import BagPanel from '@/components/BagPanel.vue'
 import FarmPanel from '@/components/FarmPanel.vue'
+import IllustratedPanel from '@/components/IllustratedPanel.vue'
+import PetPanel from '@/components/PetPanel.vue'
 import TaskPanel from '@/components/TaskPanel.vue'
 
-const currentTab = ref<'farm' | 'bag' | 'task'>('farm')
+const currentTab = ref<'farm' | 'illustrated' | 'pet' | 'bag' | 'task'>('farm')
 </script>
 
 <template>
@@ -21,6 +23,30 @@ const currentTab = ref<'farm' | 'bag' | 'task'>('farm')
         <div class="flex items-center space-x-2">
           <div class="i-carbon-sprout text-lg" />
           <span>我的农场</span>
+        </div>
+      </button>
+      <button
+        class="rounded-lg px-4 py-2 font-medium transition-colors"
+        :class="currentTab === 'pet'
+          ? 'text-white shadow-md'
+          : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+        :style="currentTab === 'pet' ? { backgroundColor: 'var(--theme-primary)' } : {}"
+        @click="currentTab = 'pet'"
+      >
+        <div class="flex items-center space-x-2">
+          <div class="i-carbon-dog-walker text-lg" /><span>宠物</span>
+        </div>
+      </button>
+      <button
+        class="rounded-lg px-4 py-2 font-medium transition-colors"
+        :class="currentTab === 'illustrated'
+          ? 'text-white shadow-md'
+          : 'bg-white text-gray-600 hover:bg-gray-100 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+        :style="currentTab === 'illustrated' ? { backgroundColor: 'var(--theme-primary)' } : {}"
+        @click="currentTab = 'illustrated'"
+      >
+        <div class="flex items-center space-x-2">
+          <div class="i-carbon-book text-lg" /><span>图鉴</span>
         </div>
       </button>
       <button
@@ -61,7 +87,7 @@ const currentTab = ref<'farm' | 'bag' | 'task'>('farm')
         leave-from-class="transform opacity-100 scale-100"
         leave-to-class="transform opacity-0 scale-95"
       >
-        <component :is="currentTab === 'farm' ? FarmPanel : (currentTab === 'bag' ? BagPanel : TaskPanel)" />
+        <component :is="currentTab === 'farm' ? FarmPanel : (currentTab === 'illustrated' ? IllustratedPanel : (currentTab === 'pet' ? PetPanel : (currentTab === 'bag' ? BagPanel : TaskPanel)))" />
       </Transition>
     </div>
   </div>

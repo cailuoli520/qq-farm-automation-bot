@@ -1,4 +1,4 @@
-export type ActivityTabKey = 'travel' | 'constellation' | 'shop' | 'solar' | 'qingmei'
+export type ActivityTabKey = 'travel' | 'constellation' | 'shop' | 'solar' | 'qingmei' | 'qixi'
 export type ActivityVariant = 'blue' | 'violet' | 'gold' | 'green'
 export type ActivityRecord = Record<string, unknown>
 
@@ -223,6 +223,61 @@ export interface QingMeiActivityDto {
   actions: { claimSeed: ActivityActionDto, start: ActivityActionDto, continue: ActivityActionDto, settle: ActivityActionDto }
 }
 
+export interface QixiBridgeStageDto {
+  id: string
+  stage: number
+  statusCode: string
+  completed: boolean
+  claimed: boolean
+  claimable: boolean
+  current: boolean
+  cost: ActivityItemDto
+  rewards: ActivityItemDto[]
+}
+
+export interface QixiActivityDto {
+  groupId: string
+  activityId: string
+  bridgeActivityId: string
+  giftActivityId: string
+  name: string
+  startTime: number | null
+  endTime: number | null
+  serverTime: number | null
+  active: boolean
+  rules: ActivityRulesDto
+  feather: ActivityItemDto
+  sachet: ActivityItemDto
+  receivedSachet: ActivityItemDto
+  dew: ActivityItemDto & { balance: string | null, balanceKnown: boolean, usable: boolean }
+  balances: { feather: string | null, sachet: string | null, receivedSachet: string | null, dew: string | null, known: boolean }
+  bridge: { currentStage: number, claimable: boolean, stages: QixiBridgeStageDto[], displayItems: ActivityItemDto[] }
+  gift: { sentCount: string, sendLimit: string, receiveLimit: string, messageTextId: string }
+  actions: { bridge: ActivityActionDto, gift: ActivityActionDto, dew: ActivityActionDto }
+}
+
+export interface QixiDewLandTargetDto {
+  landId: string
+  hostGid: string
+  ownerName: string
+  isSelf: boolean
+  plantId: string
+  plantName: string
+  seedId: string
+  seedImage: string
+  phaseCode: number
+  phaseName: string
+  mature: boolean
+  occupiedLandIds: string[]
+}
+
+export interface QixiDewTargetsDto {
+  host: { gid: string, name: string, avatarUrl: string, isSelf: boolean }
+  lands: QixiDewLandTargetDto[]
+  count: number
+  serverValidationRequired: boolean
+}
+
 export interface ActivityActionDto {
   enabled: boolean
   available: boolean
@@ -237,6 +292,9 @@ export interface ActivityActionsDto {
   lightConstellation: ActivityActionDto
   claimSolar: ActivityActionDto
   exchange: ActivityActionDto
+  qixiBridge: ActivityActionDto
+  qixiGift: ActivityActionDto
+  qixiDew: ActivityActionDto
 }
 
 export interface ActivityCenterSnapshotDto {
@@ -245,13 +303,15 @@ export interface ActivityCenterSnapshotDto {
   solarTerms: SolarTermsDto | null
   constellation: ConstellationDto | null
   qingMei: QingMeiActivityDto | null
+  qixi: QixiActivityDto | null
   actions: ActivityActionsDto
   errors: {
     season: string | null
     shop: string | null
     solarTerms: string | null
     qingMei: string | null
+    qixi: string | null
   }
 }
 
-export type ActivityMutationKey = 'claimPass' | 'lightConstellation' | 'claimSolar' | 'exchange' | 'qingMeiSeed' | 'qingMeiStart' | 'qingMeiContinue' | 'qingMeiSettle'
+export type ActivityMutationKey = 'claimPass' | 'lightConstellation' | 'claimSolar' | 'exchange' | 'qingMeiSeed' | 'qingMeiStart' | 'qingMeiContinue' | 'qingMeiSettle' | 'qixiBridge' | 'qixiGift' | 'qixiDew'

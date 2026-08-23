@@ -15,6 +15,7 @@ export const activityTabs: readonly ActivityTabDefinition[] = [
   { key: 'shop', label: '星砂商店', theme: 'night', showRefresh: true, showBalance: true },
   { key: 'solar', label: '节令小礼', theme: 'day', showRefresh: true, showBalance: false },
   { key: 'qingmei', label: '青酿换万金', theme: 'night', showRefresh: true, showBalance: false },
+  { key: 'qixi', label: '鹊桥寄情', theme: 'day', showRefresh: true, showBalance: false },
 ] as const
 
 export const activityTabByKey = Object.fromEntries(

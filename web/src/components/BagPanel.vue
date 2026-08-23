@@ -66,7 +66,7 @@ const confirmModal = ref({
   message: '',
   type: 'primary' as 'primary' | 'danger',
   loading: false,
-  action: '' as 'sell' | 'use' | 'batchSell',
+  action: '' as 'sell' | 'use' | 'batchSell' | 'batchLock' | 'batchUnlock',
   item: null as any,
   selectedItems: [] as any[],
 })
@@ -81,8 +81,12 @@ interface SellReward {
 }
 
 const selectedSellableCount = computed(() => {
-  return selectedForBatch.value.size
+  return filteredItems.value.filter((item: any) => selectedForBatch.value.has(itemKey(item)) && canBatchSell(item)).length
 })
+
+const selectedLockableCount = computed(() => filteredItems.value.filter(
+  (item: any) => selectedForBatch.value.has(itemKey(item)) && isLockable(item),
+).length)
 
 function itemKey(item: any) {
   if (item?.key)
@@ -103,7 +107,13 @@ function getPriceClass(item: any) {
 
 function canSell(item: any) {
   const itemType = Number(item?.itemType || 0)
-  return (itemType === 17 || itemType === 6) && item?.sellable === true
+  return !item?.locked && (itemType === 17 || itemType === 6) && item?.sellable === true
+}
+
+function isLockable(item: any) {
+  return [5, 6, 17].includes(Number(item?.itemType || 0))
+    && /^\d+$/.test(String(item?.uid || ''))
+    && String(item.uid) !== '0'
 }
 
 function canBatchSell(item: any) {
@@ -112,7 +122,7 @@ function canBatchSell(item: any) {
 
 function canUse(item: any) {
   const itemType = Number(item?.itemType || 0)
-  return itemType === 11
+  return !item?.locked && itemType === 11
 }
 
 function getSellRewards(item: any): SellReward[] {
@@ -249,6 +259,25 @@ async function handleConfirm() {
         await loadBag()
       }
     }
+    else if ((action === 'batchLock' || action === 'batchUnlock') && selectedItems) {
+      const locked = action === 'batchLock'
+      const itemUids = selectedItems
+        .map((it: any) => String(it?.uid || '').trim())
+        .filter((uid: string) => /^\d+$/.test(uid) && uid !== '0')
+      if (itemUids.length === 0) {
+        toastStore.error('未找到可操作的物品 UID')
+        return
+      }
+      const res = await bagStore.setItemsLocked(currentAccountId.value, itemUids, locked)
+      if (res.ok) {
+        toastStore.success(`已${locked ? '锁定' : '解锁'} ${Number(res.data?.changed || itemUids.length)} 组物品`)
+        selectedForBatch.value.clear()
+        await loadBag()
+      }
+      else {
+        toastStore.error(`${locked ? '锁定' : '解锁'}失败: ${res.error || '未知错误'}`)
+      }
+    }
     else if (action === 'use' && item) {
       const res = await bagStore.useItem(currentAccountId.value, Number(item.id), Number(item.count || 1), item.uid || 0)
       if (res.ok) {
@@ -291,6 +320,14 @@ function selectAllSellable() {
   }
 }
 
+function selectAllLockable() {
+  selectedForBatch.value.clear()
+  for (const item of filteredItems.value) {
+    if (isLockable(item))
+      selectedForBatch.value.add(itemKey(item))
+  }
+}
+
 function handleBatchSellClick() {
   const sellableItems = filteredItems.value.filter((item: any) => canBatchSell(item))
   if (sellableItems.length === 0) {
@@ -303,14 +340,15 @@ function handleBatchSellClick() {
     return
   }
 
+  const sellableKeys = new Set(filteredItems.value.filter((item: any) => canBatchSell(item)).map(itemKey))
   const itemsToSell = originalItems.value
-    .filter((it: any) => selectedList.includes(itemKey(it)))
+    .filter((it: any) => selectedList.includes(itemKey(it)) && sellableKeys.has(itemKey(it)))
     .map((it: any) => ({ id: it.id, count: it.count, uid: it.uid || 0 }))
 
   const rewards = aggregateSellRewards(selectedDisplayItems(itemsToSell))
 
   const messages = [
-    `确定要批量出售选中的 ${selectedList.length} 种物品吗?`,
+    `确定要批量出售选中的 ${itemsToSell.length} 种物品吗?`,
   ]
   if (rewards.length > 0)
     messages.push('预计获得：', ...rewardLines(rewards))
@@ -324,6 +362,31 @@ function handleBatchSellClick() {
     action: 'batchSell',
     item: null,
     selectedItems: itemsToSell,
+  }
+}
+
+function handleBatchLockClick(locked: boolean) {
+  const rowsByKey = new Map(filteredItems.value.map((item: any) => [itemKey(item), item]))
+  const selectedItems = originalItems.value.filter((item: any) => {
+    const row: any = rowsByKey.get(itemKey(item))
+    return selectedForBatch.value.has(itemKey(item))
+      && row
+      && isLockable(row)
+      && Boolean(row.locked) !== locked
+  })
+  if (selectedItems.length === 0) {
+    toastStore.warning(`没有需要${locked ? '锁定' : '解锁'}的物品`)
+    return
+  }
+  confirmModal.value = {
+    show: true,
+    title: locked ? '批量锁定' : '批量解锁',
+    message: `确定要${locked ? '锁定' : '解锁'}选中的 ${selectedItems.length} 组物品吗？`,
+    type: 'primary',
+    loading: false,
+    action: locked ? 'batchLock' : 'batchUnlock',
+    item: null,
+    selectedItems,
   }
 }
 
@@ -422,7 +485,7 @@ useIntervalFn(loadBag, 60000)
 
         <div class="flex-1" />
 
-        <template v-if="selectedCategory === 'fruit' || selectedCategory === 'superFruit' || selectedCategory === 'all'">
+        <template v-if="selectedCategory === 'fruit' || selectedCategory === 'superFruit' || selectedCategory === 'seed' || selectedCategory === 'all'">
           <button
             class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
             :class="batchMode
@@ -431,14 +494,20 @@ useIntervalFn(loadBag, 60000)
             @click="toggleBatchMode"
           >
             <div v-if="batchMode" class="i-carbon-close mr-1 inline-block" />
-            {{ batchMode ? '取消批量' : '批量出售' }}
+            {{ batchMode ? '取消批量' : '批量管理' }}
           </button>
           <template v-if="batchMode">
+            <button
+              class="rounded-lg bg-indigo-500 px-3 py-1.5 text-sm text-white font-medium transition hover:bg-indigo-600"
+              @click="selectAllLockable"
+            >
+              全选可锁定
+            </button>
             <button
               class="rounded-lg bg-blue-500 px-3 py-1.5 text-sm text-white font-medium transition dark:bg-blue-600 hover:bg-blue-600 dark:hover:bg-blue-700"
               @click="selectAllSellable"
             >
-              全选
+              全选可出售
             </button>
             <button
               class="rounded-lg px-3 py-1.5 text-sm font-medium transition"
@@ -449,6 +518,20 @@ useIntervalFn(loadBag, 60000)
               @click="handleBatchSellClick"
             >
               出售 ({{ selectedSellableCount }})
+            </button>
+            <button
+              class="rounded-lg bg-amber-500 px-3 py-1.5 text-sm text-white font-medium transition disabled:bg-gray-300"
+              :disabled="selectedLockableCount === 0"
+              @click="handleBatchLockClick(true)"
+            >
+              锁定
+            </button>
+            <button
+              class="rounded-lg bg-sky-500 px-3 py-1.5 text-sm text-white font-medium transition disabled:bg-gray-300"
+              :disabled="selectedLockableCount === 0"
+              @click="handleBatchLockClick(false)"
+            >
+              解锁
             </button>
           </template>
         </template>
@@ -461,9 +544,9 @@ useIntervalFn(loadBag, 60000)
           class="group relative flex flex-col items-center border rounded-lg bg-white p-3 transition dark:border-gray-700 dark:bg-gray-800 hover:shadow-md"
           :class="{
             'ring-2 ring-orange-500 dark:ring-orange-400': batchMode && selectedForBatch.has(itemKey(item)),
-            'opacity-50': batchMode && canBatchSell(item) && !selectedForBatch.has(itemKey(item)),
+            'opacity-50': batchMode && isLockable(item) && !selectedForBatch.has(itemKey(item)),
           }"
-          @click="batchMode && canBatchSell(item) && handleSellClick(item)"
+          @click="batchMode && isLockable(item) && handleSellClick(item)"
         >
           <div class="absolute left-2 top-2 text-xs text-gray-400 font-mono">
             #{{ item.id }}
@@ -496,7 +579,7 @@ useIntervalFn(loadBag, 60000)
               </button>
             </template>
             <div
-              v-else-if="canBatchSell(item)"
+              v-else-if="isLockable(item)"
               class="h-5 w-5 flex items-center justify-center border-2 rounded transition"
               :class="selectedForBatch.has(itemKey(item))
                 ? 'border-orange-500 bg-orange-500 text-white'
@@ -524,6 +607,7 @@ useIntervalFn(loadBag, 60000)
           </div>
 
           <div class="mb-1 w-full truncate px-2 text-center text-sm font-bold" :title="item.name">
+            <span v-if="item.locked" class="mr-1 text-amber-500" title="已锁定">🔒</span>
             {{ item.name || `物品${item.id}` }}
           </div>
 
@@ -549,7 +633,7 @@ useIntervalFn(loadBag, 60000)
       :message="confirmModal.message"
       :type="confirmModal.type"
       :loading="confirmModal.loading"
-      :confirm-text="confirmModal.action === 'sell' ? '确认出售' : confirmModal.action === 'batchSell' ? '确认出售' : '确认使用'"
+      :confirm-text="confirmModal.action === 'sell' || confirmModal.action === 'batchSell' ? '确认出售' : confirmModal.action === 'batchLock' ? '确认锁定' : confirmModal.action === 'batchUnlock' ? '确认解锁' : '确认使用'"
       @confirm="handleConfirm"
       @cancel="handleCancel"
     />

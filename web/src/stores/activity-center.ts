@@ -5,15 +5,18 @@ import type {
   ActivityRecord,
   ActivityTabKey,
   QingMeiActivityDto,
+  QixiActivityDto,
+  QixiDewTargetsDto,
 } from '@/features/activity-center/types'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { fetchActivitySnapshot, postActivityMutation } from '@/features/activity-center/api'
+import { fetchActivitySnapshot, fetchQixiDewTargetsRequest, postActivityMutation } from '@/features/activity-center/api'
 import {
   errorMessage,
   first,
   normalizeActivitySnapshot,
   normalizeItem,
+  normalizeQixiDewTargets,
   record,
   records,
   text,
@@ -39,7 +42,14 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     qingMeiStart: false,
     qingMeiContinue: false,
     qingMeiSettle: false,
+    qixiBridge: false,
+    qixiGift: false,
+    qixiDew: false,
   })
+  const dewTargets = ref<QixiDewTargetsDto | null>(null)
+  const dewTargetsLoading = ref(false)
+  const dewTargetsError = ref('')
+  let dewTargetsRequestVersion = 0
   let loadInFlight: { accountId: string, promise: Promise<boolean> } | null = null
 
   const season = computed(() => snapshot.value.season)
@@ -48,6 +58,7 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
   const solar = solarTerms
   const constellation = computed(() => snapshot.value.constellation)
   const qingMei = computed(() => snapshot.value.qingMei)
+  const qixi = computed(() => snapshot.value.qixi)
   const actions = computed(() => snapshot.value.actions)
   const serverNow = computed(() => Date.now() + serverClockOffset.value)
   const tabBadges = computed<Partial<Record<ActivityTabKey, boolean>>>(() => ({
@@ -55,10 +66,12 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     constellation: actions.value.lightConstellation.available,
     solar: actions.value.claimSolar.available,
     qingmei: !!qingMei.value && (!qingMei.value.dailySeed.claimed || qingMei.value.actions.continue.available || qingMei.value.actions.settle.available),
+    qixi: !!qixi.value && (qixi.value.actions.bridge.available || qixi.value.actions.gift.available || qixi.value.actions.dew.available),
   }))
 
   function reset() {
     requestVersion.value += 1
+    dewTargetsRequestVersion += 1
     loadInFlight = null
     snapshot.value = normalizeActivitySnapshot({})
     loading.value = false
@@ -68,7 +81,10 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     loadedAccountId.value = ''
     successfulAccountId.value = ''
     serverClockOffset.value = 0
-    pendingActions.value = { claimPass: false, lightConstellation: false, claimSolar: false, exchange: false, qingMeiSeed: false, qingMeiStart: false, qingMeiContinue: false, qingMeiSettle: false }
+    dewTargets.value = null
+    dewTargetsLoading.value = false
+    dewTargetsError.value = ''
+    pendingActions.value = { claimPass: false, lightConstellation: false, claimSolar: false, exchange: false, qingMeiSeed: false, qingMeiStart: false, qingMeiContinue: false, qingMeiSettle: false, qixiBridge: false, qixiGift: false, qixiDew: false }
   }
 
   function isCurrent(version: number, accountId: string) {
@@ -76,8 +92,11 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     return requestVersion.value === version && storedAccountId === accountId
   }
 
+  function disabledAction(action: ActivityActionDto): ActivityActionDto {
+    return { ...action, enabled: false, available: false }
+  }
+
   function disableQingMeiActions(activity: QingMeiActivityDto): QingMeiActivityDto {
-    const disabledAction = (action: ActivityActionDto): ActivityActionDto => ({ ...action, enabled: false, available: false })
     return {
       ...activity,
       actions: {
@@ -85,6 +104,17 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
         start: disabledAction(activity.actions.start),
         continue: disabledAction(activity.actions.continue),
         settle: disabledAction(activity.actions.settle),
+      },
+    }
+  }
+
+  function disableQixiActions(activity: QixiActivityDto): QixiActivityDto {
+    return {
+      ...activity,
+      actions: {
+        bridge: disabledAction(activity.actions.bridge),
+        gift: disabledAction(activity.actions.gift),
+        dew: disabledAction(activity.actions.dew),
       },
     }
   }
@@ -99,20 +129,44 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     return '青酿操作已提交，但最新状态暂未取回，请点击右上角刷新确认，不要重复操作'
   }
 
-  function applySnapshot(value: unknown, clientStartedAt = Date.now(), preserveFailedQingMei = false) {
+  function preserveQixiAfterUnknownMutation() {
+    if (snapshot.value.qixi) {
+      snapshot.value = {
+        ...snapshot.value,
+        qixi: disableQixiActions(snapshot.value.qixi),
+        actions: {
+          ...snapshot.value.actions,
+          qixiBridge: disabledAction(snapshot.value.actions.qixiBridge),
+          qixiGift: disabledAction(snapshot.value.actions.qixiGift),
+          qixiDew: disabledAction(snapshot.value.actions.qixiDew),
+        },
+      }
+    }
+    return '鹊桥操作已提交，但最新状态暂未取回，请点击右上角刷新确认，不要重复操作'
+  }
+
+  function applySnapshot(value: unknown, clientStartedAt = Date.now(), preserveFailedActivity: 'qingMei' | 'qixi' | null = null) {
     const previousConstellation = snapshot.value.constellation
     const previousQingMei = snapshot.value.qingMei
+    const previousQixi = snapshot.value.qixi
     const normalized = normalizeActivitySnapshot(value)
     let warning = ''
     if (!normalized.constellation && normalized.errors.season && previousConstellation)
       normalized.constellation = previousConstellation
     if (!normalized.qingMei && normalized.errors.qingMei && previousQingMei) {
       normalized.qingMei = disableQingMeiActions(previousQingMei)
-      if (preserveFailedQingMei)
+      if (preserveFailedActivity === 'qingMei')
         warning = '青酿操作已提交，但最新状态暂未取回，请点击右上角刷新确认，不要重复操作'
     }
+    if (!normalized.qixi && normalized.errors.qixi && previousQixi && preserveFailedActivity === 'qixi') {
+      normalized.qixi = disableQixiActions(previousQixi)
+      normalized.actions.qixiBridge = disabledAction(normalized.actions.qixiBridge)
+      normalized.actions.qixiGift = disabledAction(normalized.actions.qixiGift)
+      normalized.actions.qixiDew = disabledAction(normalized.actions.qixiDew)
+      warning = '鹊桥操作已提交，但最新状态暂未取回，请点击右上角刷新确认，不要重复操作'
+    }
     snapshot.value = normalized
-    const serverTime = [normalized.season?.serverTime, normalized.shop?.serverTime, normalized.solarTerms?.serverTime, normalized.constellation?.serverTime]
+    const serverTime = [normalized.season?.serverTime, normalized.shop?.serverTime, normalized.solarTerms?.serverTime, normalized.constellation?.serverTime, normalized.qixi?.serverTime]
       .find(value => value !== null && value !== undefined)
     if (serverTime !== undefined && serverTime !== null)
       serverClockOffset.value = serverTime - Math.round((clientStartedAt + Date.now()) / 2)
@@ -191,13 +245,19 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
       const resultRecord = record(result)
       const mutationSnapshot = first(resultRecord.snapshot, resultRecord.activityCenter, resultRecord.activity_center)
       const mutationSnapshotError = text(resultRecord.snapshotError, resultRecord.snapshot_error)
+      const mutationActivity = key.startsWith('qingMei') ? 'qingMei' : key.startsWith('qixi') ? 'qixi' : null
       let snapshotWarning = ''
-      if (mutationSnapshot)
-        snapshotWarning = applySnapshot(mutationSnapshot, Date.now(), key.startsWith('qingMei'))
-      else if (key.startsWith('qingMei') && mutationSnapshotError)
-        snapshotWarning = preserveQingMeiAfterUnknownMutation()
-      else
+      if (mutationSnapshot) {
+        snapshotWarning = applySnapshot(mutationSnapshot, Date.now(), mutationActivity)
+      }
+      else if (mutationActivity && mutationSnapshotError) {
+        snapshotWarning = mutationActivity === 'qingMei'
+          ? preserveQingMeiAfterUnknownMutation()
+          : preserveQixiAfterUnknownMutation()
+      }
+      else {
         await load(requestedAccountId, true)
+      }
       const rewards = records(resultRecord.rewards).map(normalizeItem).filter(item => item.id || item.name)
       const rewardSummary = rewards.map(item => `${item.name || item.id}${item.count ? ` ×${item.count}` : ''}`).join('、')
       notice.value = text(resultRecord.message, record(responseData).message, rewardSummary ? `获得 ${rewardSummary}` : '操作成功')
@@ -231,6 +291,45 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     return mutate('exchange', '/shop/exchange', accountId, { goodsId, count })
   }
 
+  function clearQixiDewTargets() {
+    dewTargetsRequestVersion += 1
+    dewTargets.value = null
+    dewTargetsLoading.value = false
+    dewTargetsError.value = ''
+  }
+
+  async function fetchQixiDewTargets(accountId: string, hostGid = '') {
+    const requestedAccountId = String(accountId || '').trim()
+    if (!requestedAccountId) {
+      clearQixiDewTargets()
+      dewTargetsError.value = '请先选择账号'
+      return false
+    }
+    const version = ++dewTargetsRequestVersion
+    dewTargetsLoading.value = true
+    dewTargetsError.value = ''
+    try {
+      const value = await fetchQixiDewTargetsRequest(requestedAccountId, hostGid)
+      if (version !== dewTargetsRequestVersion)
+        return false
+      dewTargets.value = normalizeQixiDewTargets(value)
+      if (!dewTargets.value)
+        dewTargetsError.value = '未能读取灵露候选地块'
+      return !!dewTargets.value
+    }
+    catch (targetError) {
+      if (version === dewTargetsRequestVersion) {
+        dewTargets.value = null
+        dewTargetsError.value = errorMessage(targetError, '加载灵露候选地块失败')
+      }
+      return false
+    }
+    finally {
+      if (version === dewTargetsRequestVersion)
+        dewTargetsLoading.value = false
+    }
+  }
+
   function claimQingMeiSeed(accountId: string) {
     return mutate('qingMeiSeed', '/qingmei/daily-seed/claim', accountId)
   }
@@ -245,6 +344,21 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
 
   function settleQingMeiBrew(accountId: string) {
     return mutate('qingMeiSettle', '/qingmei/brew/settle', accountId)
+  }
+
+  function claimQixiBridgeRewards(accountId: string) {
+    return mutate('qixiBridge', '/qixi/bridge/claim', accountId)
+  }
+
+  function giftQixiSachet(accountId: string, friendGid: string, messageTextId = 15) {
+    return mutate('qixiGift', '/qixi/gift', accountId, { friendGid, messageTextId })
+  }
+
+  async function useQixiDew(accountId: string, hostGid: string, landId: string) {
+    const succeeded = await mutate('qixiDew', '/qixi/dew/use', accountId, { hostGid, landId })
+    if (succeeded)
+      await fetchQixiDewTargets(accountId, hostGid)
+    return succeeded
   }
 
   function lazyLoad(accountId: string) {
@@ -263,6 +377,7 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     solarTerms,
     constellation,
     qingMei,
+    qixi,
     actions,
     tabBadges,
     loading,
@@ -274,6 +389,9 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     serverClockOffset,
     serverNow,
     pendingActions,
+    dewTargets,
+    dewTargetsLoading,
+    dewTargetsError,
     lazyLoad,
     refresh,
     claimPass,
@@ -284,6 +402,11 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     startQingMeiBrew,
     continueQingMeiBrew,
     settleQingMeiBrew,
+    claimQixiBridgeRewards,
+    giftQixiSachet,
+    fetchQixiDewTargets,
+    clearQixiDewTargets,
+    useQixiDew,
     reset,
   }
 })

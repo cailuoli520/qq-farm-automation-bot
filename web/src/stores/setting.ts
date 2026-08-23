@@ -10,6 +10,12 @@ export interface AutomationConfig {
   task?: boolean
   sell?: boolean
   mystery_shop_buy?: boolean
+  mystery_shop_allow_gold?: boolean
+  mystery_shop_allow_coupon?: boolean
+  mystery_shop_allow_gold_bean?: boolean
+  mystery_shop_allow_diamond?: boolean
+  mystery_shop_arrival_notify?: boolean
+  mystery_shop_purchase_notify?: boolean
   fertilizer?: string
   fertilizer_multi_season?: boolean
   fertilizer_land_types?: string[]

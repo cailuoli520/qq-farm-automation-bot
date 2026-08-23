@@ -180,6 +180,12 @@ function getPlantSizeText(land: any) {
       <span v-if="land.needWater" class="rounded bg-blue-100 px-0.5 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">水</span>
       <span v-if="land.needWeed" class="rounded bg-green-100 px-0.5 text-green-700 dark:bg-green-900/30 dark:text-green-400">草</span>
       <span v-if="land.needBug" class="rounded bg-red-100 px-0.5 text-red-700 dark:bg-red-900/30 dark:text-red-400">虫</span>
+      <span
+        v-for="effect in (land.interactionEffects || [])"
+        :key="`${effect.itemId}-${effect.hostGid}-${effect.usedAt}-${effect.landId}`"
+        class="rounded bg-purple-100 px-0.5 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300"
+        :title="effect.itemName"
+      >{{ effect.itemName }}</span>
       <!-- For friends view -->
       <span v-if="land.status === 'harvestable'" class="rounded bg-orange-100 px-0.5 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">可偷</span>
     </div>

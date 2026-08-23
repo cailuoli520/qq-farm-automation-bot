@@ -272,6 +272,7 @@ interface BagSeedItem {
   count: number
   requiredLevel: number
   plantSize: number
+  image: string
 }
 
 const bagSeeds = ref<BagSeedItem[]>([])
@@ -607,6 +608,12 @@ const localAutomationSettings = ref({
     task: false,
     sell: false,
     mystery_shop_buy: false,
+    mystery_shop_allow_gold: true,
+    mystery_shop_allow_coupon: false,
+    mystery_shop_allow_gold_bean: false,
+    mystery_shop_allow_diamond: false,
+    mystery_shop_arrival_notify: false,
+    mystery_shop_purchase_notify: false,
     friend: false,
     farm_push: false,
     land_upgrade: false,
@@ -647,6 +654,12 @@ function syncLocalAutomationSettings() {
         task: false,
         sell: false,
         mystery_shop_buy: false,
+        mystery_shop_allow_gold: true,
+        mystery_shop_allow_coupon: false,
+        mystery_shop_allow_gold_bean: false,
+        mystery_shop_allow_diamond: false,
+        mystery_shop_arrival_notify: false,
+        mystery_shop_purchase_notify: false,
         friend: false,
         farm_push: false,
         land_upgrade: false,
@@ -670,6 +683,12 @@ function syncLocalAutomationSettings() {
         task: false,
         sell: false,
         mystery_shop_buy: false,
+        mystery_shop_allow_gold: true,
+        mystery_shop_allow_coupon: false,
+        mystery_shop_allow_gold_bean: false,
+        mystery_shop_allow_diamond: false,
+        mystery_shop_arrival_notify: false,
+        mystery_shop_purchase_notify: false,
         friend: false,
         farm_push: false,
         land_upgrade: false,
@@ -1237,7 +1256,8 @@ async function handleTestOffline() {
                     @drop="dropBagSeed(seed.seedId, $event)"
                   >
                     <div class="h-8 w-8 flex shrink-0 items-center justify-center rounded bg-amber-100 text-xs text-amber-700 font-bold dark:bg-amber-900/50 dark:text-amber-300">
-                      {{ index + 1 }}
+                      <img v-if="seed.image" :src="seed.image" :alt="seed.name" class="h-7 w-7 object-contain" loading="lazy" referrerpolicy="no-referrer">
+                      <span v-else>{{ index + 1 }}</span>
                     </div>
                     <div class="min-w-0 flex-1">
                       <div class="truncate text-sm text-gray-800 font-medium dark:text-gray-200">
@@ -1407,6 +1427,34 @@ async function handleTestOffline() {
               <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_buy_normal" label="自动购买无机化肥" />
               <BaseSwitch v-model="localAutomationSettings.automation.skip_own_weed_bug" label="不除自己草虫" />
               <BaseSwitch v-model="localAutomationSettings.autoRelogin.enabled" label="启用自动重登" />
+            </div>
+
+            <div class="border border-purple-200 rounded bg-purple-50/60 p-3 text-sm space-y-3 dark:border-purple-800/60 dark:bg-purple-900/10">
+              <div class="text-purple-800 font-medium dark:text-purple-300">
+                神秘商人保护
+              </div>
+              <div class="flex flex-wrap gap-4">
+                <BaseSwitch v-model="localAutomationSettings.automation.mystery_shop_arrival_notify" label="到货提醒" />
+                <BaseSwitch
+                  v-model="localAutomationSettings.automation.mystery_shop_purchase_notify"
+                  label="购买提醒"
+                  :disabled="!localAutomationSettings.automation.mystery_shop_buy"
+                />
+              </div>
+              <div v-if="localAutomationSettings.automation.mystery_shop_buy" class="space-y-2">
+                <div class="text-gray-700 dark:text-gray-300">
+                  允许自动支付的币种
+                </div>
+                <div class="flex flex-wrap gap-4">
+                  <BaseSwitch v-model="localAutomationSettings.automation.mystery_shop_allow_gold" label="金币" />
+                  <BaseSwitch v-model="localAutomationSettings.automation.mystery_shop_allow_coupon" label="点券" />
+                  <BaseSwitch v-model="localAutomationSettings.automation.mystery_shop_allow_gold_bean" label="金豆豆" />
+                  <BaseSwitch v-model="localAutomationSettings.automation.mystery_shop_allow_diamond" label="钻石" />
+                </div>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                自动购买会先校验币种白名单和余额；余额未知或不足时不会下单。提醒复用下线提醒中的推送渠道。
+              </p>
             </div>
 
             <div v-if="localAutomationSettings.automation.fertilizer_buy_organic || localAutomationSettings.automation.fertilizer_buy_normal" class="rounded bg-green-50 p-3 text-sm space-y-3 dark:bg-green-900/20">
