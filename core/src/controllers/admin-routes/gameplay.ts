@@ -221,6 +221,76 @@ function registerGameplayRoutes(options: GameplayRouteOptions): void {
         }
     });
 
+    app.get('/api/illustrated', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+        try {
+            const data = await provider.getIllustratedSnapshot(id);
+            res.json({ ok: true, data });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
+    app.get('/api/pets', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        try {
+            res.json({ ok: true, data: await provider.getPetInfo(id) });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
+    app.post('/api/pets/deploy', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        const dogId = Number(req.body?.dogId);
+        if (!Number.isSafeInteger(dogId) || dogId <= 0) {
+            return res.status(400).json({ ok: false, error: 'dogId 必须为正整数' });
+        }
+        try {
+            res.json({ ok: true, data: await provider.deployDog(id, dogId) });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
+    app.post('/api/pets/withdraw', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        try {
+            res.json({ ok: true, data: await provider.withdrawDog(id) });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
+    app.post('/api/pets/food/use', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        const itemId = Number(req.body?.itemId);
+        const count = req.body?.count === undefined ? 1 : Number(req.body.count);
+        if (!Number.isSafeInteger(itemId) || itemId <= 0) {
+            return res.status(400).json({ ok: false, error: 'itemId 必须为正整数' });
+        }
+        if (!Number.isSafeInteger(count) || count <= 0) {
+            return res.status(400).json({ ok: false, error: 'count 必须为正整数' });
+        }
+        try {
+            res.json({ ok: true, data: await provider.useDogFood(id, itemId, count) });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
     // API: 使用背包物品
     app.post('/api/bag/use', async (req, res) => {
         const id = getAccId(req);
@@ -257,6 +327,27 @@ function registerGameplayRoutes(options: GameplayRouteOptions): void {
                 return res.status(400).json({ ok: false, error: '缺少出售物品列表' });
             }
             const data = await provider.sellItems(id, items);
+            res.json({ ok: true, data });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
+    app.post('/api/bag/lock', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+        try {
+            const { itemUids, locked } = req.body || {};
+            if (!Array.isArray(itemUids) || itemUids.length === 0) {
+                return res.status(400).json({ ok: false, error: '缺少物品 UID 列表' });
+            }
+            if (typeof locked !== 'boolean') {
+                return res.status(400).json({ ok: false, error: 'locked 必须为布尔值' });
+            }
+            const data = await provider.setItemsLocked(id, itemUids, locked);
             res.json({ ok: true, data });
         } catch (e) {
             handleApiError(res, e);
@@ -388,7 +479,7 @@ function registerGameplayRoutes(options: GameplayRouteOptions): void {
     app.get('/api/analytics', async (req, res) => {
         try {
             const sortBy = req.query.sort || 'exp';
-            const { getPlantRankings } = require('../services/analytics');
+            const { getPlantRankings } = require('../../services/analytics');
             const data = getPlantRankings(sortBy);
             res.json({ ok: true, data });
         } catch (e) {

@@ -29,6 +29,7 @@ const {
     getCurrentPhase,
     getDisplayLandContext,
     getFastMatureLands,
+    getPlantInteractionEffects,
     getLandTypeByLevel,
     getOrganicFertilizerTargetsFromLands,
     isOccupiedSlaveLand,
@@ -119,6 +120,23 @@ async function weedOut(landIds: unknown[]): Promise<DynamicRecord> {
 async function insecticide(landIds: unknown[]): Promise<DynamicRecord> {
     const state = getUserState();
     return sendPlantRequest(types.InsecticideRequest, types.InsecticideReply, 'Insecticide', landIds, state.gid);
+}
+
+/** 自家一键务农。官方请求会显式编码两个值为 0 的场景字段。 */
+function encodeOwnFarmingRequest(landIds: unknown[], hostGid: unknown): Uint8Array {
+    return types.FarmingRequest.encode(types.FarmingRequest.create({
+        land_ids: landIds,
+        host_gid: toLong(hostGid),
+        field_3: 0,
+        field_4: 0,
+    })).finish();
+}
+
+async function farmingOwn(landIds: unknown[]): Promise<DynamicRecord> {
+    const state = getUserState();
+    const body = encodeOwnFarmingRequest(landIds, state.gid);
+    const { body: replyBody } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Farming', body);
+    return types.FarmingReply.decode(replyBody);
 }
 
 // 普通肥料 ID
@@ -472,6 +490,7 @@ async function getLandsDetail() {
             const needWater = (toNum(plant.dry_num) > 0) || (toTimeSec(currentPhase.dry_time) > 0 && toTimeSec(currentPhase.dry_time) <= nowSec);
             const needWeed = (plant.weed_owners && plant.weed_owners.length > 0) || (toTimeSec(currentPhase.weeds_time) > 0 && toTimeSec(currentPhase.weeds_time) <= nowSec);
             const needBug = (plant.insect_owners && plant.insect_owners.length > 0) || (toTimeSec(currentPhase.insect_time) > 0 && toTimeSec(currentPhase.insect_time) <= nowSec);
+            const interactionEffects = getPlantInteractionEffects(plant);
 
             lands.push({
                 id,
@@ -488,6 +507,7 @@ async function getLandsDetail() {
                 needWater,
                 needWeed,
                 needBug,
+                interactionEffects,
                 stealable: !!plant.stealable,
                 level,
                 maxLevel,
@@ -706,6 +726,7 @@ async function runFarmOperation(opType: string) {
     if (status.needWeed.length) statusParts.push(`草:${status.needWeed.length}`);
     if (status.needBug.length) statusParts.push(`虫:${status.needBug.length}`);
     if (status.needWater.length) statusParts.push(`水:${status.needWater.length}`);
+    if (status.needInteractionCleanup.length) statusParts.push(`道具:${status.needInteractionCleanup.length}`);
     if (status.dead.length) statusParts.push(`枯:${status.dead.length}`);
     if (status.empty.length) statusParts.push(`空:${status.empty.length}`);
     if (status.unlockable.length) statusParts.push(`解:${status.unlockable.length}`);
@@ -718,6 +739,14 @@ async function runFarmOperation(opType: string) {
     if (opType === 'all' || opType === 'clear') {
         // 检查是否跳过自己农场的草虫（仅自动模式生效，手动clear不受影响）
         const skipOwnWeedBug = opType === 'all' && isAutomationOn('skip_own_weed_bug');
+        if (status.needInteractionCleanup.length > 0 && !skipOwnWeedBug) {
+            try {
+                await farmingOwn(status.needInteractionCleanup);
+                actions.push(`清理道具${status.needInteractionCleanup.length}`);
+            } catch (e) {
+                logWarn('务农', `清理土地互动道具失败: ${errorMessage(e)}`);
+            }
+        }
         if (status.needWeed.length > 0 && !skipOwnWeedBug) {
             try {
                 await weedOut(status.needWeed);
@@ -1020,6 +1049,7 @@ export {
     buildLandMap,
     buildSlaveToMasterMap,
     checkFarm,
+    encodeOwnFarmingRequest,
     getAllLands,
     getAvailableSeeds,
     getCurrentPhase,

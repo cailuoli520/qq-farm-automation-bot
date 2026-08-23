@@ -22,6 +22,7 @@ export interface BagItemLike {
     uid?: unknown;
     expire_time?: unknown;
     mutant_types?: unknown;
+    locked?: unknown;
 }
 
 export interface SellRewardDto {
@@ -59,6 +60,7 @@ interface BagDetailRow {
     uid: string;
     expireTime: number;
     mutantTypes: string[];
+    locked: boolean;
     name: string;
     image: string;
     category: string;
@@ -89,6 +91,7 @@ const missingImageNotified = new Set<number>();
 
 const SELL_BATCH_SIZE = 15;
 const BAG_DETAIL_TIMEOUT_MS = 8000;
+const LOCKABLE_ITEM_TYPES = new Set([5, 6, 17]);
 // 种子物品 ID 段（2xxxx）：活动种子不在本地 Plant.json 时也按种子处理
 const SEED_ID_MIN = 20000;
 const SEED_ID_MAX = 30000;
@@ -171,6 +174,30 @@ function getMutantTypes(item: unknown): string[] {
         .filter((value: string) => value !== '0');
 }
 
+function isItemLocked(item: unknown): boolean {
+    const source = asRecord(item);
+    return source.locked === true || source.locked === 1 || source.locked === '1';
+}
+
+function isLockableItem(item: unknown): boolean {
+    const source = asRecord(item);
+    const id = toNum(source.id);
+    const info = getItemById(id);
+    const display = getItemDisplayById(id);
+    const itemType = Number(display?.itemType || info?.type || 0);
+    return LOCKABLE_ITEM_TYPES.has(itemType) || isLikelySeedId(id) || isLikelyFruitId(id);
+}
+
+function normalizeItemUids(values: unknown): string[] {
+    const result: string[] = [];
+    for (const value of Array.isArray(values) ? values : []) {
+        const uid = int64String(value);
+        if (uid === '0' || result.includes(uid)) continue;
+        result.push(uid);
+    }
+    return result;
+}
+
 function hasExpireSellCondition(itemId: unknown): boolean {
     const policy = getItemSalePolicyById(itemId);
     return String(policy?.condition || '')
@@ -208,14 +235,18 @@ function planItemUse(
     const itemId = toNum(itemIdValue);
     const requestedCount = Math.max(1, toNum(countValue));
     const requestedUid = int64String(uidValue);
-    const candidates = (items || []).filter(item => (
+    const matchingItems = (items || []).filter(item => (
         toNum(item.id) === itemId
         && (requestedUid === '0' || int64String(item.uid) === requestedUid)
         && toNum(item.count) > 0
     ));
+    const candidates = matchingItems.filter(item => !isItemLocked(item));
     const available = candidates.reduce((sum, item) => sum + Math.max(0, toNum(item.count)), 0);
     if (available < requestedCount) {
-        throw new Error(`物品数量不足: 需要 ${requestedCount}，当前 ${available}`);
+        const lockedCount = matchingItems
+            .filter(isItemLocked)
+            .reduce((sum, item) => sum + Math.max(0, toNum(item.count)), 0);
+        throw new Error(`物品可用数量不足: 需要 ${requestedCount}，当前 ${available}${lockedCount > 0 ? `，另有 ${lockedCount} 个已锁定` : ''}`);
     }
 
     let remaining = requestedCount;
@@ -299,11 +330,13 @@ async function sellItems(items: BagItemLike[]): Promise<Record<string, unknown> 
         const id = toNum(item && item.id);
         const count = toNum(item && item.count);
         if (id <= 0 || count <= 0) throw new Error('出售物品参数无效');
+        if (isItemLocked(item)) throw new Error(`物品 ${id} 已锁定，不能出售`);
         let eligibilitySource = item;
-        if (hasExpireSellCondition(id)) {
+        if (int64String(item.uid) !== '0' || hasExpireSellCondition(id)) {
             if (!currentBagItems) currentBagItems = getBagItems(await getBag());
             const actualItem = findBagItem(currentBagItems, item);
             if (!actualItem || toNum(actualItem.count) < count) throw new Error(`物品 ${id} 的背包数量或 UID 已变化`);
+            if (isItemLocked(actualItem)) throw new Error(`物品 ${id} 已锁定，不能出售`);
             eligibilitySource = actualItem;
         }
         if (!getSellEligibility(eligibilitySource, baseContext).sellable) throw new Error(`物品 ${id} 当前不可直接出售`);
@@ -356,6 +389,48 @@ function getBagItems(bagReply: unknown): BagItemLike[] {
         return nestedItems;
     }
     return recordArray(reply.items);
+}
+
+async function setItemsLocked(itemUids: unknown, locked: boolean): Promise<{
+    locked: boolean;
+    changed: number;
+    itemUids: string[];
+}> {
+    const requestedUids = normalizeItemUids(itemUids);
+    if (requestedUids.length === 0) throw new Error('缺少物品 UID');
+
+    const bagItems = getBagItems(await getBag());
+    const byUid = new Map(
+        bagItems
+            .filter(item => int64String(item.uid) !== '0')
+            .map(item => [int64String(item.uid), item]),
+    );
+    const actionableUids: string[] = [];
+    for (const uid of requestedUids) {
+        const item = byUid.get(uid);
+        if (!item) throw new Error(`背包中未找到 UID ${uid}`);
+        if (!isLockableItem(item)) {
+            const info = getItemById(toNum(item.id));
+            throw new Error(`${info?.name || `物品${toNum(item.id)}`}不支持锁定`);
+        }
+        if (isItemLocked(item) !== locked) actionableUids.push(uid);
+    }
+    if (actionableUids.length === 0) return { locked, changed: 0, itemUids: [] };
+
+    const RequestType = locked ? types.LockItemsRequest : types.UnlockItemsRequest;
+    const ReplyType = locked ? types.LockItemsReply : types.UnlockItemsReply;
+    const method = locked ? 'LockItems' : 'UnlockItems';
+    const body = RequestType.encode(RequestType.create({
+        item_uids: actionableUids.map(toLong),
+    })).finish();
+    const { body: replyBody } = await sendMsgAsync('gamepb.itempb.ItemService', method, body);
+    const reply = asRecord(ReplyType.decode(replyBody));
+    const confirmedUids = normalizeItemUids(reply.item_uids);
+    return {
+        locked,
+        changed: confirmedUids.length || actionableUids.length,
+        itemUids: confirmedUids.length > 0 ? confirmedUids : actionableUids,
+    };
 }
 
 function isFertilizerRelatedItemId(itemId: unknown): boolean {
@@ -592,6 +667,7 @@ async function getBagDetail() {
         uid: string;
         expireTime: number;
         mutantTypes: string[];
+        locked: boolean;
     }> = [];
     for (const it of (rawItems || [])) {
         const id = toNum(it.id);
@@ -605,6 +681,7 @@ async function getBagDetail() {
             uid,
             expireTime: getItemExpireTime(it),
             mutantTypes: getMutantTypes(it),
+            locked: isItemLocked(it),
         });
     }
 
@@ -666,6 +743,7 @@ async function getBagDetail() {
                 uid,
                 expireTime,
                 mutantTypes,
+                locked: isItemLocked(it),
                 name,
                 image,
                 category,
@@ -739,7 +817,7 @@ async function sellAllFruits(): Promise<void> {
                 ...sellContext,
                 expireTime: getItemExpireTime(item),
             });
-            if (isAutoSellEligible(eligibility) && count > 0) {
+            if (!isItemLocked(item) && isAutoSellEligible(eligibility) && count > 0) {
                 toSell.push(item);
                 const display = getItemDisplayById(id);
                 const name = display?.name && display.name !== `物品 #${id}` ? display.name : getFruitName(id);
@@ -853,7 +931,7 @@ async function getBagSeeds(): Promise<BagSeedDto[]> {
     for (const item of (rawItems || [])) {
         const seedId = toNum(item && item.id);
         const count = toNum(item && item.count);
-        if (seedId <= 0 || count <= 0) continue;
+        if (seedId <= 0 || count <= 0 || isItemLocked(item)) continue;
 
         const plant = getPlantBySeedId(seedId);
         // 活动种子（2xxxx 段）不在本地植物配置时，兜底识别为种子：
@@ -895,9 +973,11 @@ export {
     getFertilizerGiftDailyState,
     getSellEligibility,
     isAutoSellEligible,
+    isLockableItem,
     openFertilizerGiftPacksSilently,
     planItemUse,
     sellAllFruits,
     sellItems,
+    setItemsLocked,
     useItem,
 };

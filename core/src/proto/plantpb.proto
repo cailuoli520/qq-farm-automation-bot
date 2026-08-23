@@ -90,9 +90,36 @@ message PlantInfo {
     int64 field_27 = 27;
     bytes field_32 = 32;
     repeated bytes field_34 = 34;
+    // 当前仍生效的互动道具使用记录（301101=黄金虫，301102=足球）。
+    repeated PlantInteractionUseInfo interaction_uses = 35;
     bytes field_36 = 36;
     int64 field_37 = 37;
+    // 当前仍生效的互动道具目标记录；land_id 为目标土地。
+    repeated PlantInteractionTargetInfo interaction_targets = 38;
+    // 七夕灵露等活动道具留下的植物扩展状态；抓包确认同一植物可能有多条记录。
+    repeated PlantExtendedStatus field_40 = 40;
     bytes field_41 = 41;
+}
+
+message PlantInteractionUseInfo {
+    int64 item_id = 1;
+    int64 count = 2;
+    int64 effect_type = 3;
+    int64 host_gid = 4;
+    int64 timestamp = 5;
+}
+
+message PlantInteractionTargetInfo {
+    int64 item_id = 1;
+    int64 host_gid = 2;
+    int64 timestamp = 3;
+    int64 land_id = 4;
+}
+
+// PlantInfo.field_40：活动扩展状态，字段语义仅按已确认的值组合使用。
+message PlantExtendedStatus {
+    int64 value_1 = 1;
+    int64 value_2 = 2;
 }
 
 // ============ 生长阶段详情 ============
@@ -170,8 +197,8 @@ message HarvestReply {
 message FarmingRequest {
     repeated int64 land_ids = 1;
     int64 host_gid = 2;
-    bool is_all = 3;
-    int32 field_4 = 4;  // 抓包固定为 2，具体语义待确认
+    int32 field_3 = 3;
+    int32 field_4 = 4;  // 好友帮助固定为 2；自家一键务农为 0
 }
 
 message FarmingOperationResult {

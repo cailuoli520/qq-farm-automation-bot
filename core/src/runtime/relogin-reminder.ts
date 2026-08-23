@@ -56,6 +56,7 @@ export interface ReloginReminderService {
     triggerOfflineReminder: (payload?: OfflineReminderPayload) => Promise<void>;
     startReloginWatcher: (payload: ReloginWatcherPayload) => void;
     applyReloginCode: (payload: ReloginCodePayload) => void;
+    sendConfiguredNotification: (payload: OfflineReminderPayload & { title: string; content: string }) => Promise<void>;
 }
 
 function errorMessage(error: unknown): string {
@@ -75,6 +76,33 @@ function createReloginReminderService(options: ReloginReminderOptions): ReloginR
     } = options;
 
     const reloginWatchers = new Map<string, { startedAt: number }>(); // key: accountId:loginCode
+
+    async function sendConfiguredNotification(
+        payload: OfflineReminderPayload & { title: string; content: string },
+    ): Promise<void> {
+        try {
+            const accountId = String(payload.accountId || '').trim();
+            const accounts = getAccounts().accounts || [];
+            const account = accounts.find(item => String(item.id) === accountId);
+            const username = String(account?.username || '').trim();
+            const cfg = store.getOfflineReminder ? store.getOfflineReminder(username) : null;
+            if (!cfg) return;
+            const channel = String(cfg.channel || '').trim().toLowerCase();
+            const endpoint = String(cfg.endpoint || '').trim();
+            const token = String(cfg.token || '').trim();
+            if (!channel || (channel === 'webhook' ? !endpoint : !token)) return;
+            const ret = await sendPushooMessage({
+                channel,
+                endpoint,
+                token,
+                title: payload.title,
+                content: payload.content,
+            });
+            if (!ret?.ok) log('错误', `消息提醒发送失败: ${ret?.msg || 'unknown'}`);
+        } catch (error) {
+            log('错误', `消息提醒发送异常: ${errorMessage(error)}`);
+        }
+    }
 
     function getOfflineAutoDeleteMs(username = ''): number {
         const cfg = store.getOfflineReminder ? store.getOfflineReminder(username) : null;
@@ -297,6 +325,7 @@ function createReloginReminderService(options: ReloginReminderOptions): ReloginR
         triggerOfflineReminder,
         startReloginWatcher,
         applyReloginCode,
+        sendConfiguredNotification,
     };
 }
 

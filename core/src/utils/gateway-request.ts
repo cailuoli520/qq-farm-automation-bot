@@ -17,12 +17,38 @@ export function generateGatewayRequestToken(): string {
     return `${token}=`;
 }
 
+export class GatewayTokenProvider {
+    private pendingInitToken = '';
+
+    stageInitToken(value: unknown): number {
+        const token = String(value || '').trim();
+        if (!token) return 0;
+        if (token.length > 64 * 1024 || !/^[\x21-\x7E]+$/.test(token)) {
+            throw new Error('TSDK 初始化凭据格式无效');
+        }
+        this.pendingInitToken = token;
+        return token.length;
+    }
+
+    next(): string {
+        if (!this.pendingInitToken) return generateGatewayRequestToken();
+        const token = this.pendingInitToken;
+        this.pendingInitToken = '';
+        return token;
+    }
+
+    clear(): void {
+        this.pendingInitToken = '';
+    }
+}
+
 export function encodeGatewayRequest(
     serviceName: string,
     methodName: string,
     bodyBytes: Uint8Array | null | undefined,
     clientSeq: unknown,
     serverSeq: unknown,
+    token = generateGatewayRequestToken(),
 ): Uint8Array {
     const message = types.GateMessage.create({
         meta: {
@@ -33,7 +59,7 @@ export function encodeGatewayRequest(
             server_seq: toLong(serverSeq),
         },
         body: bodyBytes || Buffer.alloc(0),
-        token: generateGatewayRequestToken(),
+        token,
     });
     return types.GateMessage.encode(message).finish();
 }

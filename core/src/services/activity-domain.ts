@@ -10,6 +10,7 @@ const { types } = require("../utils/proto");
 const { capturePostMutationSnapshot, retryFailedSnapshotSection } = require("../utils/request-coordination");
 const { getBag, getBagItems } = require("./warehouse");
 const qingmei = require("./qingmei");
+const qixi = require("./qixi");
 const {
   activityDto: mapActivityDto,
   bytesToText,
@@ -36,7 +37,7 @@ const CONSTELLATION_ACTIVITY_TYPE = "13";
 const EXCHANGE_SHOP_OPERATE_TYPE = 1;
 const QUERY_SHOP_OPERATE_TYPE = 7;
 const LIGHT_CONSTELLATION_OPERATE_TYPE = 21;
-const SNAPSHOT_TOTAL_TIMEOUT_MS = 20000;
+const SNAPSHOT_TOTAL_TIMEOUT_MS = 24000;
 const SNAPSHOT_PARTITION_TIMEOUT_MS = 5000;
 const ACTIVITY_READ_TIMEOUT_MS = 20000;
 const MAX_SIGNED_INT64 = 9223372036854775807n;
@@ -577,7 +578,8 @@ function buildActions(
   season: DynamicRecord | null,
   solarTerms: DynamicRecord | null,
   constellation: DynamicRecord | null = null,
-  shop: DynamicRecord | null = null
+  shop: DynamicRecord | null = null,
+  qixiActivity: DynamicRecord | null = null
 ): DynamicRecord {
   const hasPass = !!season?.pass;
   const claimablePassCount = hasPass ? season!.pass.nodes.filter((node: DynamicRecord) => node.claimable).length : 0;
@@ -616,7 +618,10 @@ function buildActions(
       availabilityKnown: !!shop,
       count: Number(shop?.action?.count) || 0,
       ...!shop ? { reason: "\u6D3B\u52A8\u5546\u5E97\u76EE\u5F55\u5F53\u524D\u4E0D\u53EF\u7528" } : shop.action?.reason ? { reason: shop.action.reason } : {}
-    }
+    },
+    qixiBridge: qixiActivity?.actions?.bridge || { enabled: false, available: false, availabilityKnown: false },
+    qixiGift: qixiActivity?.actions?.gift || { enabled: false, available: false, availabilityKnown: false },
+    qixiDew: qixiActivity?.actions?.dew || { enabled: false, available: false, availabilityKnown: false }
   };
 }
 async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = null): Promise<DynamicRecord> {
@@ -644,11 +649,6 @@ async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = 
     }
   ]);
   const rawSeason = settledValue(seasonResult);
-  if (!rawSeason && solarResult.status === "rejected" && qingMeiResult.status === "rejected") {
-    const rejected = [seasonResult, solarResult, qingMeiResult, bagResult]
-      .find((result): result is PromiseRejectedResult => result.status === "rejected");
-    throw rejected?.reason || new Error("活动中心快照查询失败");
-  }
   const season = rawSeason ? normalizeSeason(rawSeason) : null;
   const solarTerms = solarResult.status === "fulfilled" ? normalizeSolarTerms(solarResult.value) : null;
   let shopResult: PromiseSettledResult<DynamicRecord>;
@@ -661,6 +661,21 @@ async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = 
   } else {
     shopResult = { status: "rejected", reason: new Error("\u8D5B\u5B63\u67E5\u8BE2\u5931\u8D25\uFF0C\u65E0\u6CD5\u53D1\u73B0\u6D3B\u52A8\u5546\u5E97 ID") };
   }
+  // 鹊桥是限时可选活动，放在既有活动分区之后，避免其下线或超时挤占青梅和商店预算。
+  const [qixiResult] = await settleSequentially<DynamicRecord | null>([
+    () => {
+      const timeout = nextSnapshotTimeout();
+      const bagInput = bagResult.status === "fulfilled"
+        ? bagResult.value
+        : Promise.reject(bagResult.reason);
+      return qixi.getCurrentQixiActivity(bagInput, timeout);
+    }
+  ]);
+  if (!rawSeason && solarResult.status === "rejected" && qingMeiResult.status === "rejected" && qixiResult.status === "rejected") {
+    const rejected = [seasonResult, solarResult, qingMeiResult, qixiResult, bagResult]
+      .find((result): result is PromiseRejectedResult => result.status === "rejected");
+    throw rejected?.reason || new Error("活动中心快照查询失败");
+  }
   const shop = settledValue(shopResult);
   const constellationActivity = findSeasonActivity(rawSeason, CONSTELLATION_ACTIVITY_TYPE);
   const constellationIdentity = rawSeason && constellationActivity
@@ -672,26 +687,32 @@ async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = 
     lastConstellationDynamicState.get(stateRecordKey(constellationIdentity)),
     loadMergedConstellationState(rawSeason, constellationActivity)
   ) : null;
-  const actions = buildActions(season, solarTerms, constellation, shop);
   const qingMei = settledValue(qingMeiResult);
+  const qixiActivity = settledValue(qixiResult);
+  const actions = buildActions(season, solarTerms, constellation, shop, qixiActivity);
   return {
     season,
     constellation,
     shop,
     solarTerms,
     qingMei,
+    qixi: qixiActivity,
     capabilities: {
       claimPass: actions.claimPass.supported,
       lightConstellation: actions.lightConstellation.supported,
       claimSolar: actions.claimSolar.supported,
-      exchange: actions.exchange.supported
+      exchange: actions.exchange.supported,
+      qixiBridge: !!qixiActivity,
+      qixiGift: !!qixiActivity,
+      qixiDew: !!qixiActivity
     },
     actions,
     errors: {
       season: settledError(seasonResult),
       shop: settledError(shopResult),
       solarTerms: settledError(solarResult),
-      qingMei: settledError(qingMeiResult)
+      qingMei: settledError(qingMeiResult),
+      qixi: settledError(qixiResult)
     }
   };
 }
@@ -714,6 +735,19 @@ async function captureFreshQingMeiMutationSnapshot(): Promise<DynamicRecord> {
 }
 async function withFreshQingMeiMutationSnapshot(result: DynamicRecord): Promise<DynamicRecord> {
   return { ...result, ...await captureFreshQingMeiMutationSnapshot() };
+}
+async function withFreshQixiMutationSnapshot(result: DynamicRecord): Promise<DynamicRecord> {
+  return {
+    ...result,
+    ...await capturePostMutationSnapshot(async () => {
+      const snapshot = await getFreshActivityCenterSnapshot();
+      return retryFailedSnapshotSection(
+        snapshot,
+        "qixi",
+        () => qixi.getCurrentQixiActivity(null, ACTIVITY_READ_TIMEOUT_MS)
+      );
+    })
+  };
 }
 async function getCurrentSeasonEvent(): Promise<DynamicRecord> {
   const seasonReply = await querySeason();
@@ -739,6 +773,9 @@ async function getCurrentSolarTerms(): Promise<DynamicRecord> {
 }
 async function getCurrentQingMeiActivity(): Promise<DynamicRecord> {
   return qingmei.getCurrentQingMeiActivity();
+}
+async function getCurrentQixiActivity(): Promise<DynamicRecord> {
+  return qixi.getCurrentQixiActivity();
 }
 function serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
   return snapshotCoordinator.serializeMutation(operation);
@@ -972,20 +1009,37 @@ async function continueQingMeiBrew(): Promise<DynamicRecord> {
 async function settleQingMeiBrew(): Promise<DynamicRecord> {
   return serializeMutation(async () => withFreshQingMeiMutationSnapshot(await qingmei.settleBrew()));
 }
+async function claimQixiBridgeRewards(): Promise<DynamicRecord> {
+  return serializeMutation(async () => withFreshQixiMutationSnapshot(await qixi.claimBridgeRewards()));
+}
+async function giftQixiSachet(friendGid: unknown, messageTextId: unknown): Promise<DynamicRecord> {
+  return serializeMutation(async () => withFreshQixiMutationSnapshot(await qixi.giftSachet(friendGid, messageTextId)));
+}
+async function getQixiDewTargets(hostGid: unknown): Promise<DynamicRecord> {
+  return qixi.getDewTargets(hostGid);
+}
+async function useQixiDew(hostGid: unknown, landId: unknown): Promise<DynamicRecord> {
+  return serializeMutation(async () => withFreshQixiMutationSnapshot(await qixi.useDew(hostGid, landId)));
+}
 export {
   claimBattlePassRewards,
   claimQingMeiDailySeed,
+  claimQixiBridgeRewards,
   claimSolarTerm,
   continueQingMeiBrew,
   exchangeStarSandGoods,
   getActivityCenterSnapshot,
   getBattlePassNotifyClaimability,
   getCurrentQingMeiActivity,
+  getCurrentQixiActivity,
   getCurrentSeasonEvent,
   getCurrentSolarTerms,
   getCurrentStarSandShop,
+  getQixiDewTargets,
+  giftQixiSachet,
   isNoBattlePassRewardError,
   lightConstellation,
   settleQingMeiBrew,
   startQingMeiBrew,
+  useQixiDew,
 };

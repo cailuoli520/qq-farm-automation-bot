@@ -2,12 +2,13 @@ import { Buffer } from 'node:buffer';
 import EventEmitter from 'node:events';
 import process from 'node:process';
 import { CONFIG, getClientVersion, getVersionPrefix, setClientVersionPrefix } from '../config/config';
-import { startAceRuntime } from '../services/ace';
+import { startAceRuntime, stopAceRuntime } from '../services/ace';
 import { createScheduler } from '../services/scheduler';
 import { recordOperation } from '../services/stats';
 import { updateStatusFromLogin, updateStatusGold, updateStatusLevel } from '../services/status';
 import * as cryptoWasm from './crypto-wasm';
-import { encodeGatewayRequest } from './gateway-request';
+import { encodeGatewayRequest, GatewayTokenProvider } from './gateway-request';
+import { MAX_HEARTBEAT_MISSES, shouldReconnectForHeartbeat } from './keepalive-policy';
 import { decodeMessage, encodeMessage } from './proto';
 import { canReserveRequest } from './request-coordination';
 import type { RequestCategory } from './request-coordination';
@@ -60,6 +61,7 @@ interface UserState {
     openid: string;
     coupon: number;
     goldBean: number;
+    diamond: number | null;
 }
 
 interface WsErrorState {
@@ -116,6 +118,7 @@ const MAX_BUSINESS_REQUESTS = 4;
 let connectionRevision = 0;
 let lastInboundAt = Date.now();
 let lastPressureLogAt = 0;
+const gatewayTokens = new GatewayTokenProvider();
 
 function describePendingRequests(limit = MAX_PENDING_REQUESTS): string {
     if (pendingCallbacks.size === 0) return 'none';
@@ -165,6 +168,7 @@ const userState: UserState = {
     openid: '',
     coupon: 0, // 点券(ID:1002)
     goldBean: 0, // 金豆豆(ID:1005)
+    diamond: null, // 钻石(ID:1004)，需通过充值信息或推送确认
 };
 
 function getUserState(): UserState { return userState; }
@@ -192,7 +196,14 @@ async function encodeMsg(
     if (finalBody.length > 0) {
         finalBody = await cryptoWasm.encryptBuffer(finalBody);
     }
-    return encodeGatewayRequest(serviceName, methodName, finalBody, clientSeqValue, serverSeq);
+    return encodeGatewayRequest(
+        serviceName,
+        methodName,
+        finalBody,
+        clientSeqValue,
+        serverSeq,
+        gatewayTokens.next(),
+    );
 }
 
 async function sendMsg(
@@ -501,6 +512,12 @@ function handleNotify(msg: DataRecord): void {
                         } else if (delta !== 0) {
                             userState.goldBean = Math.max(0, Number(userState.goldBean || 0) + delta);
                         }
+                    } else if (id === 1004) {
+                        if (count > 0) {
+                            userState.diamond = count;
+                        } else if (delta !== 0) {
+                            userState.diamond = Math.max(0, Number(userState.diamond || 0) + delta);
+                        }
                     }
                 }
             } catch { }
@@ -659,7 +676,7 @@ async function sendLogin(onLoginSuccess: (() => void) | null = null): Promise<vo
         },
     });
 
-    await sendMsg('gamepb.userpb.UserService', 'Login', body, (err, bodyBytes, _meta) => {
+    await sendMsg('gamepb.userpb.UserService', 'Login', body, async (err, bodyBytes, _meta) => {
         if (err) {
             log('登录', `失败: ${err.message}`);
             // 如果是验证失败，直接退出进程
@@ -704,12 +721,23 @@ async function sendLogin(onLoginSuccess: (() => void) | null = null): Promise<vo
                 console.warn('===============================');
                 console.warn('');
 
-                // ACE 反作弊：绑定用户并启动定时 AntiData 上报（模拟真实客户端，避免服务端挂起）
+                // ACE 反作弊：绑定失败不能阻断已经成功的游戏登录。
                 userState.openid = String(basic.open_id || '').trim();
+                let aceReady = true;
                 if (userState.openid) {
-                    cryptoWasm.bindUser(userState.openid).catch(() => {});
+                    try {
+                        await cryptoWasm.bindUser(userState.openid);
+                        const initTokenLength = gatewayTokens.stageInitToken(cryptoWasm.getEncryptedInitInfo());
+                        if (initTokenLength > 0) {
+                            log('ACE', `TSDK 初始化凭据已就绪: ${initTokenLength} 字符，将随下一条请求发送`);
+                        }
+                    } catch (aceError) {
+                        aceReady = false;
+                        gatewayTokens.clear();
+                        logWarn('ACE', `TSDK 用户绑定失败，已继续完成账号登录: ${errorMessage(aceError)}`);
+                    }
                 }
-                startAceRuntime(sendMsgAsync);
+                if (aceReady) startAceRuntime(sendMsgAsync);
 
             }
 
@@ -724,11 +752,13 @@ async function sendLogin(onLoginSuccess: (() => void) | null = null): Promise<vo
 // ============ 心跳 ============
 let heartbeatInFlight = false;
 const HEARTBEAT_TIMEOUT = 20000;
+let heartbeatMissCount = 0;
 
 function startHeartbeat(): void {
     networkScheduler.clear('heartbeat_interval');
     lastInboundAt = Date.now();
     heartbeatInFlight = false;
+    heartbeatMissCount = 0;
 
     networkScheduler.setIntervalTask('heartbeat_interval', CONFIG.heartbeatInterval, () => {
         if (!userState.gid) return;
@@ -744,6 +774,7 @@ function startHeartbeat(): void {
             timeoutMs: HEARTBEAT_TIMEOUT,
             category: 'control',
         }).then(({ body: replyBody }) => {
+            heartbeatMissCount = 0;
             try {
                 const reply = decodeMessage('HeartbeatReply', replyBody);
                 applyServerVersionInfo(reply.version_info);
@@ -754,8 +785,13 @@ function startHeartbeat(): void {
             const wasSent = Number(requestError.sentAt) > 0;
             const noInboundSinceSend = lastInboundAt <= Number(requestError.sentAt);
             if (requestError.code === 'REQUEST_TIMEOUT' && wasSent && noInboundSinceSend) {
-                logWarn('心跳', `心跳请求超时且 ${Math.round((Date.now() - lastInboundAt) / 1000)}s 无入站消息，立即重连 (${requestPressureDetails()})`);
-                reconnect(null);
+                heartbeatMissCount += 1;
+                const inboundSilenceMs = Math.max(0, Date.now() - lastInboundAt);
+                logWarn('心跳', `心跳未响应 (${heartbeatMissCount}/${MAX_HEARTBEAT_MISSES})，${Math.round(inboundSilenceMs / 1000)}s 无入站消息 (${requestPressureDetails()})`);
+                if (shouldReconnectForHeartbeat(heartbeatMissCount, inboundSilenceMs)) {
+                    logWarn('心跳', '连续心跳超时且连接无入站数据，开始重连');
+                    reconnect(null);
+                }
             }
         }).finally(() => {
             heartbeatInFlight = false;
@@ -837,8 +873,11 @@ function connect(code: unknown, onLoginSuccess: (() => void) | null = null): voi
 function cleanup(reason = '网络清理'): void {
     connectionRevision += 1;
     heartbeatInFlight = false;
+    heartbeatMissCount = 0;
+    gatewayTokens.clear();
     rejectAllPendingRequests(`请求已中断: ${reason}`);
     networkScheduler.clearAll();
+    stopAceRuntime(true);
     // pendingCallbacks.clear();
 }
 

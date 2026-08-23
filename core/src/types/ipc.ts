@@ -22,6 +22,7 @@ export type WorkerToMasterMessage =
     | { type: 'reauth_required'; code: number; message: string }
     | { type: 'account_kicked'; reason: string }
     | { type: 'version_prefix_update'; prefix: string }
+    | { type: 'push_notify'; title: string; content: string }
     | { type: 'api_response'; id: number; result?: unknown; error?: string }
     | { type: 'friend_blacklist_add'; gid: number; friendName?: string; reason?: string };
 

@@ -40,6 +40,11 @@ export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<
         getSeeds: () => getAvailableSeeds(),
         getBag: () => require('../services/warehouse').getBagDetail(),
         getBagSeeds: () => require('../services/warehouse').getBagSeeds(),
+        getIllustratedSnapshot: () => require('../services/illustrated').getIllustratedSnapshot(),
+        getPetInfo: () => require('../services/pets').getPetInfo(),
+        deployDog: args => require('../services/pets').deployDog(args[0]),
+        withdrawDog: () => require('../services/pets').withdrawDog(),
+        useDogFood: args => require('../services/pets').useDogFood(args[0], args[1]),
         getDiamondBalance: () => require('../services/pay').getDiamondBalance(),
         useItem: (args) => {
             const { useItem } = require('../services/warehouse');
@@ -52,6 +57,7 @@ export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<
             const sellList = Array.isArray(args[0]) ? args[0] : [];
             return sellItems(sellList.map(item => ({ id: item.id, count: item.count, uid: item.uid || 0 })));
         },
+        setItemsLocked: args => require('../services/warehouse').setItemsLocked(args[0], args[1] === true),
         setAutomation: (args) => {
             const payload: DynamicRecord = args?.[0] && typeof args[0] === 'object' ? args[0] : {};
             applyRuntimeConfig({ automation: { [payload.key]: payload.value } }, true);
@@ -73,6 +79,7 @@ export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<
         getCurrentStarSandShop: () => require('../services/activity').getCurrentStarSandShop(),
         getCurrentSolarTerms: () => require('../services/activity').getCurrentSolarTerms(),
         getCurrentQingMeiActivity: () => require('../services/activity').getCurrentQingMeiActivity(),
+        getCurrentQixiActivity: () => require('../services/activity').getCurrentQixiActivity(),
         claimBattlePassRewards: () => require('../services/activity').claimBattlePassRewards(),
         exchangeStarSandGoods: args => require('../services/activity').exchangeStarSandGoods(args[0], args[1]),
         lightConstellation: () => require('../services/activity').lightConstellation(),
@@ -81,6 +88,10 @@ export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<
         startQingMeiBrew: args => require('../services/activity').startQingMeiBrew(args[0]),
         continueQingMeiBrew: () => require('../services/activity').continueQingMeiBrew(),
         settleQingMeiBrew: () => require('../services/activity').settleQingMeiBrew(),
+        claimQixiBridgeRewards: () => require('../services/activity').claimQixiBridgeRewards(),
+        giftQixiSachet: args => require('../services/activity').giftQixiSachet(args[0], args[1]),
+        getQixiDewTargets: args => require('../services/activity').getQixiDewTargets(args[0]),
+        useQixiDew: args => require('../services/activity').useQixiDew(args[0], args[1]),
     };
 }
 

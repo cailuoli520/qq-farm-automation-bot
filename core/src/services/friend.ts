@@ -13,9 +13,10 @@ const { types } = require('../utils/proto');
 const { toLong, toNum, log, logWarn, sleep, randomDelay } = require('../utils/utils');
 const { getCurrentPhase, setOperationLimitsCallback } = require('./farm');
 const { createScheduler } = require('./scheduler');
+const { createDailyExecutionGate } = require('./daily-execution');
 const { recordOperation } = require('./stats');
 const { sellAllFruits } = require('./warehouse');
-const { BAD_SHARED_LIMIT_ID, friendOperationLimits } = require('./friend-operation-limits');
+const { BAD_SHARED_LIMIT_ID, friendOperationLimits, getBeijingDateKey } = require('./friend-operation-limits');
 const { analyzeFriendLands, buildFriendLandsDetail } = require('./friend-land-domain');
 const {
     clearFriendDirectoryRuntimeState,
@@ -54,6 +55,7 @@ let isCheckingFriends = false;
 let friendLoopRunning = false;
 let externalSchedulerMode = false;
 const friendScheduler = createScheduler('friend');
+const badDailyExecutionGate = createDailyExecutionGate(getBeijingDateKey);
 
 async function acceptFriends(gids: unknown[]): Promise<DynamicRecord> {
     const body = types.AcceptFriendsRequest.encode(types.AcceptFriendsRequest.create({
@@ -1106,16 +1108,9 @@ async function acceptFriendsWithRetry(gids: unknown[]): Promise<void> {
     }
 }
 
-// ============ 启动时执行一次放虫放草 ============
+// ============ 每日执行一次放虫放草 ============
 
-let badExecutedOnStartup = false;
-
-async function runBadOnceOnStartup() {
-    if (badExecutedOnStartup) {
-       // log('好友', '启动时放虫放草已执行过，跳过', { module: 'friend', event: '启动放虫放草跳过' });
-        return;
-    }
-
+async function runBadOncePerDay() {
     const autoBadEnabled = isAutomationOn('friend_bad');
     if (!autoBadEnabled) {
       //  log('好友', '放虫放草功能未开启，跳过', { module: 'friend', event: '放虫放草未开启' });
@@ -1129,14 +1124,14 @@ async function runBadOnceOnStartup() {
     }
 
     const accountId = process.env.FARM_ACCOUNT_ID || '';
-
-    if (isCheckingFriends) {
-        friendScheduler.setTimeoutTask('bad_startup_once_retry', 5000, () => runBadOnceOnStartup());
+    if (!badDailyExecutionGate.tryStart(isCheckingFriends, () => {
+        friendScheduler.setTimeoutTask('bad_daily_once_retry', 5000, () => runBadOncePerDay());
+    })) {
         return;
     }
     isCheckingFriends = true;
 
-    log('好友', '========== 启动时放虫放草开始 ==========', { module: 'friend', event: '启动放虫放草开始' });
+    log('好友', '========== 每日放虫放草开始 ==========', { module: 'friend', event: '每日放虫放草开始' });
 
     try {
         const friendsReply = await getAllFriends();
@@ -1192,7 +1187,7 @@ async function runBadOnceOnStartup() {
                 break;
             }
 
-            log('好友', `启动时放虫放草 ${i + 1}/${topBadFriends.length}: ${friend.name} (等级${friend.level})`, { module: 'friend', event: '放虫放草处理好友', index: i + 1, total: topBadFriends.length, friendName: friend.name, level: friend.level });
+            log('好友', `每日放虫放草 ${i + 1}/${topBadFriends.length}: ${friend.name} (等级${friend.level})`, { module: 'friend', event: '放虫放草处理好友', index: i + 1, total: topBadFriends.length, friendName: friend.name, level: friend.level });
 
             try {
                 // 使用 visitFriend 函数，类似 V1 版本逻辑
@@ -1206,16 +1201,14 @@ async function runBadOnceOnStartup() {
             await randomDelay(2000, 3500);
         }
 
-        badExecutedOnStartup = true;
-
         const summary: string[] = [];
         if (totalActions.putBug > 0) summary.push(`放虫${totalActions.putBug}`);
         if (totalActions.putWeed > 0) summary.push(`放草${totalActions.putWeed}`);
 
-        log('好友', `========== 启动时放虫放草结束 ========== 处理${processedCount}人${summary.length > 0 ? ` → ${  summary.join('/')}` : ''}`, { module: 'friend', event: '启动放虫放草结束', processedCount, summary });
+        log('好友', `========== 每日放虫放草结束 ========== 处理${processedCount}人${summary.length > 0 ? ` → ${  summary.join('/')}` : ''}`, { module: 'friend', event: '每日放虫放草结束', processedCount, summary });
 
     } catch (err) {
-        logWarn('好友', `启动时放虫放草异常: ${errorMessage(err)}`);
+        logWarn('好友', `每日放虫放草异常: ${errorMessage(err)}`);
     } finally {
         isCheckingFriends = false;
     }
@@ -1225,12 +1218,14 @@ export {
     checkFriends,
     clearFriendsListCache,
     doFriendOperation,
+    enterFriendFarm,
     getFriendLandsDetail,
     getFriendsList,
     getOperationLimits,
     isHelpExpLimitReached,
+    leaveFriendFarm,
     refreshFriendCheckLoop,
-    runBadOnceOnStartup,
+    runBadOncePerDay,
     startFriendCheckLoop,
     stopFriendCheckLoop,
 };

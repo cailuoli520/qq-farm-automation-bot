@@ -67,6 +67,7 @@ interface WorkerManagerOptions {
     buildConfigSnapshotForAccount: (accountId: AccountId) => RuntimeConfigSnapshot;
     getOfflineAutoDeleteMs: (username?: string) => number;
     triggerOfflineReminder: (payload: DynamicRecord) => Promise<void> | void;
+    sendConfiguredNotification?: (payload: DynamicRecord & { title: string; content: string }) => Promise<void> | void;
     addOrUpdateAccount: (account: DynamicRecord) => unknown;
     deleteAccount: (accountId: AccountId) => unknown;
     getAutoRelogin?: (accountId: AccountId) => AutoReloginConfig | null;
@@ -97,9 +98,48 @@ const WORKER_MESSAGE_TYPES = new Set<WorkerToMasterMessage['type']>([
     'reauth_required',
     'account_kicked',
     'version_prefix_update',
+    'push_notify',
     'api_response',
     'friend_blacklist_add',
 ]);
+
+const LONG_READ_METHODS = new Set([
+    'getActivityCenterSnapshot',
+    'getCurrentSeasonEvent',
+    'getCurrentStarSandShop',
+    'getCurrentSolarTerms',
+    'getCurrentQingMeiActivity',
+    'getCurrentQixiActivity',
+    'getQixiDewTargets',
+    'getIllustratedSnapshot',
+    'getPetInfo',
+]);
+
+const LONG_MUTATION_METHODS = new Set([
+    'claimBattlePassRewards',
+    'exchangeStarSandGoods',
+    'lightConstellation',
+    'claimSolarTerm',
+    'claimQingMeiDailySeed',
+    'startQingMeiBrew',
+    'continueQingMeiBrew',
+    'settleQingMeiBrew',
+    'claimQixiBridgeRewards',
+    'giftQixiSachet',
+    'useQixiDew',
+    'deployDog',
+    'withdrawDog',
+    'useDogFood',
+    'setItemsLocked',
+]);
+
+export function workerApiTimeout(method: string): number {
+    // 写操作可能包含操作前校验、实际写入和操作后快照；主进程不能先于
+    // Worker 返回超时，否则用户重试可能造成重复消耗。
+    if (LONG_MUTATION_METHODS.has(method)) return 150000;
+    if (LONG_READ_METHODS.has(method)) return 90000;
+    return 10000;
+}
 
 function isWorkerToMasterMessage(value: unknown): value is WorkerToMasterMessage {
     if (!value || typeof value !== 'object') return false;
@@ -127,6 +167,7 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
         buildConfigSnapshotForAccount,
         getOfflineAutoDeleteMs,
         triggerOfflineReminder,
+        sendConfiguredNotification,
         addOrUpdateAccount,
         deleteAccount,
         getAutoRelogin,
@@ -641,6 +682,15 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
                 setVersionPrefix(prefix);
                 log('系统', `服务端版本校准：账号 ${worker.name} 上报新版本前缀 ${prefix}，已持久化`, { accountId: String(accountId), accountName: worker.name });
             }
+        } else if (msg.type === 'push_notify') {
+            if (sendConfiguredNotification) {
+                void sendConfiguredNotification({
+                    accountId,
+                    accountName: worker.name,
+                    title: msg.title,
+                    content: msg.content,
+                });
+            }
         } else if (msg.type === 'api_response') {
             const { id, result, error } = msg;
             managerScheduler.clear(`api_timeout_${accountId}_${id}`);
@@ -673,31 +723,6 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
         } else {
             assertNever(msg);
         }
-    }
-
-    const ACTIVITY_READ_METHODS = new Set([
-        'getActivityCenterSnapshot',
-        'getCurrentSeasonEvent',
-        'getCurrentStarSandShop',
-        'getCurrentSolarTerms',
-        'getCurrentQingMeiActivity',
-    ]);
-    const ACTIVITY_MUTATION_METHODS = new Set([
-        'claimBattlePassRewards',
-        'exchangeStarSandGoods',
-        'lightConstellation',
-        'claimSolarTerm',
-        'claimQingMeiDailySeed',
-        'startQingMeiBrew',
-        'continueQingMeiBrew',
-        'settleQingMeiBrew',
-    ]);
-
-    function workerApiTimeout(method: string): number {
-        // 活动变更包含操作前校验、实际写操作与操作后快照，可能串行执行多次游戏请求。
-        if (ACTIVITY_MUTATION_METHODS.has(method)) return 150000;
-        if (ACTIVITY_READ_METHODS.has(method)) return 25000;
-        return 10000;
     }
 
     function callWorkerApi(accountId: AccountId, method: string, ...args: unknown[]): Promise<unknown> {

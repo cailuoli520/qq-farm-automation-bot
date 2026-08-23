@@ -34,14 +34,15 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 const DEFAULT_SYSTEM_CONFIG = {
     serverUrl: 'wss://gate-obt.nqf.qq.com/prod/ws',
-    clientVersion: '1.11.1.7_20260803',
+    clientVersion: '1.13.2.10_20260723',
     platform: 'qq',
     os: 'iOS',
 };
 
-// 客户端版本前缀（游戏真实版本号）。日期部分自动取当天，无需手动更新。
+// 客户端版本前缀（游戏真实版本号）。
 // 前缀会被服务端下发的版本信息（version_info）自动校准，见 network.js 的 applyServerVersionInfo。
-const CLIENT_VERSION_PREFIX = '1.11.1.7';
+const CLIENT_VERSION_PREFIX = '1.13.2.10';
+const CLIENT_VERSION_BUILD_DATE = '20260723';
 let runtimeVersionPrefix = CLIENT_VERSION_PREFIX;
 
 function setClientVersionPrefix(prefix: unknown): void {
@@ -62,15 +63,9 @@ const DEFAULT_AUTO_RELOGIN = {
     loginFailWindowSec: 60,  // 重登后 N 秒内未登录成功（进程退出） = 登录失败 → 禁用当天自动重登
 };
 
-function pad2(n: number): string {
-    return String(n).padStart(2, '0');
-}
-
-// 动态生成客户端版本号：前缀（可被服务端校准）_ 当天日期（自动）
+// 使用抓包确认的官方构建日期；日期不是登录日期，不能按当天动态生成。
 function getClientVersion(): string {
-    const d = new Date();
-    const ymd = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
-    return `${runtimeVersionPrefix}_${ymd}`;
+    return `${runtimeVersionPrefix}_${CLIENT_VERSION_BUILD_DATE}`;
 }
 
 const CONFIG: RuntimeConfig = {

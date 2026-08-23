@@ -5,6 +5,7 @@ import type { WorkerMysteryShopRuntime } from '../runtime/worker-mystery-shop';
 import { assertNever } from '../types/ipc';
 import { createWorkerApiHandler, createWorkerApiMethods } from '../runtime/worker-api';
 import { createWorkerAutomationScheduler } from '../runtime/worker-automation-scheduler';
+import { createWorkerDailyRoutineScheduler } from '../runtime/worker-daily-routine-scheduler';
 import { getDailyGiftOverview } from '../runtime/worker-daily-gifts';
 import { createWorkerStatusSynchronizer } from '../runtime/worker-status-sync';
 /**
@@ -15,10 +16,12 @@ const { CONFIG } = require('../config/config');
 const { getAutomation, getConfigSnapshot, applyConfigSnapshot } = require('../models/store');
 const { checkAndClaimEmails } = require('../services/email');
 const { checkFarm, startFarmCheckLoop, stopFarmCheckLoop, refreshFarmCheckLoop, runFertilizerByConfig } = require('../services/farm');
-const { checkFriends, startFriendCheckLoop, stopFriendCheckLoop, refreshFriendCheckLoop, runBadOnceOnStartup, isHelpExpLimitReached } = require('../services/friend');
+const { checkFriends, startFriendCheckLoop, stopFriendCheckLoop, refreshFriendCheckLoop, runBadOncePerDay, isHelpExpLimitReached } = require('../services/friend');
+const { getBeijingDateKey } = require('../services/friend-operation-limits');
 const { processInviteCodes } = require('../services/invite');
 const { buyFreeGifts } = require('../services/mall');
 const { performDailyMonthCardGift } = require('../services/monthcard');
+const { getDiamondBalance } = require('../services/pay');
 const { performDailyVipGift } = require('../services/qqvip');
 const { createScheduler } = require('../services/scheduler');
 const { stopAceRuntime } = require('../services/ace');
@@ -93,7 +96,6 @@ let harvestSellRunning = false;
 let onWsError: ((payload: DynamicRecord) => void) | null = null;
 let wsErrorHandledAt = 0;
 let reauthRequiredNotified = false;
-let lastDailyRunDate = '';
 let workerStartupPromise: Promise<void> | null = null;
 const workerScheduler = createScheduler('worker');
 const automationScheduler = createWorkerAutomationScheduler({
@@ -107,6 +109,16 @@ const automationScheduler = createWorkerAutomationScheduler({
     isLoginReady: () => loginReady,
     log,
     openFertilizerGiftPacksSilently,
+    scheduler: workerScheduler,
+});
+const dailyRoutineScheduler = createWorkerDailyRoutineScheduler({
+    getDateKey: getBeijingDateKey,
+    isLoginReady: () => loginReady,
+    runStartupRoutines: () => runDailyRoutines(true),
+    runCrossDayRoutines: async () => {
+        await runDailyRoutines(true);
+        await runBadOncePerDay();
+    },
     scheduler: workerScheduler,
 });
 
@@ -156,6 +168,7 @@ function cleanupWorkerResources(): void {
     loginReady = false;
     try { saveStats(); } catch {}
     try { automationScheduler.stop(); } catch {}
+    try { dailyRoutineScheduler.stop(); } catch {}
     try { stopFarmCheckLoop(); } catch {}
     try { stopFriendCheckLoop(); } catch {}
     try { cleanupTaskSystem(); } catch {}
@@ -246,14 +259,6 @@ function isDailyRoutineEnabled(_auto: unknown): boolean {
     return true;
 }
 
-function getLocalDateKey(): string {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-}
-
 async function runDailyRoutines(force = false): Promise<void> {
     if (!loginReady) return;
     try {
@@ -266,26 +271,6 @@ async function runDailyRoutines(force = false): Promise<void> {
     } catch (e) {
         log('系统', `每日任务调度失败: ${errorMessage(e)}`, { module: 'system', event: '每日任务', result: 'error' });
     }
-}
-
-function stopDailyRoutineTimer(): void {
-    workerScheduler.clear('daily_routine_interval');
-    workerScheduler.clear('daily_routine_startup');
-}
-
-function startDailyRoutineTimer(initialDelayMs = 12000): void {
-    stopDailyRoutineTimer();
-    lastDailyRunDate = getLocalDateKey();
-    workerScheduler.setTimeoutTask('daily_routine_startup', initialDelayMs, () => {
-        runDailyRoutines(true).catch(() => null);
-    });
-    workerScheduler.setIntervalTask('daily_routine_interval', 30 * 1000, () => {
-        if (!loginReady) return;
-        const today = getLocalDateKey();
-        if (today === lastDailyRunDate) return;
-        lastDailyRunDate = today;
-        runDailyRoutines(true).catch(() => null);
-    });
 }
 
 function normalizeIntervalRangeSec(minSec: unknown, maxSec: unknown, fallbackSec: unknown): { min: number; max: number } {
@@ -532,6 +517,17 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
             getAutomation,
             isLifecycleActive,
             log,
+            getCurrencyBalance: (currencyId: string) => {
+                const state = getUserState();
+                if (currencyId === '1' || currencyId === '1001') return state.gold;
+                if (currencyId === '1002') return state.coupon;
+                if (currencyId === '1004') return state.diamond;
+                if (currencyId === '1005') return state.goldBean;
+                return null;
+            },
+            notify: (title: string, content: string) => {
+                sendToMaster({ type: 'push_notify', title, content });
+            },
             service: require('../services/mystery-shop'),
         });
     mysteryShopRuntime = mysteryRuntime;
@@ -593,9 +589,14 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
         };
         networkEvents.on('farmHarvested', onFarmHarvested);
 
-        // 登录后只拉一次背包，同时初始化点券和金豆豆数量。
-        try {
-            const bagReply = await getBag();
+        // 登录后并行初始化背包币种和充值余额。失败值保留为未知，不能伪装成零余额。
+        const [bagBalanceResult, diamondBalanceResult] = await Promise.allSettled([
+            getBag(),
+            getDiamondBalance(),
+        ]);
+        const state = getUserState();
+        if (bagBalanceResult.status === 'fulfilled') {
+            const bagReply = bagBalanceResult.value;
             const items = getBagItems(bagReply);
             let coupon = 0;
             let goldBean = 0;
@@ -604,13 +605,13 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
                 if (id === 1002) coupon = toNum(it.count);
                 if (id === 1005) goldBean = toNum(it.count);
             }
-            const state = getUserState();
             state.coupon = Math.max(0, coupon);
             state.goldBean = Math.max(0, goldBean);
             log('系统', `金豆豆数量: ${state.goldBean}`);
-        } catch {
-            // ignore
         }
+        state.diamond = diamondBalanceResult.status === 'fulfilled'
+            ? Math.max(0, Number(diamondBalanceResult.value) || 0)
+            : null;
         if (!isLifecycleActive()) return;
         // 登录成功后，以当前金币/经验/点券作为统计基线，并清空会话增量
         const latest = getUserState();
@@ -626,13 +627,13 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
         }
         if (!isLifecycleActive()) return;
         
-        // 启动时执行一次放虫放草（只在账号启动时执行）
-        workerScheduler.setTimeoutTask('bad_startup_once', 20000, async () => {
+        // 启动时执行当天的放虫放草；跨日后由每日调度再次触发。
+        workerScheduler.setTimeoutTask('bad_daily_once', 20000, async () => {
             try {
-                await runBadOnceOnStartup();
+                await runBadOncePerDay();
             } catch (e) {
                 const reason = errorMessage(e);
-                log('好友', `启动时放虫放草执行失败: ${reason}`, { module: 'friend', event: '启动放虫放草失败', error: reason });
+                log('好友', `每日放虫放草执行失败: ${reason}`, { module: 'friend', event: '每日放虫放草失败', error: reason });
             }
         });
         
@@ -684,7 +685,7 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
         startFriendCheckLoop({ externalScheduler: true });
         automationScheduler.start();
         // 每日礼包/任务改为跨日调度，不在农场轮询内执行
-        startDailyRoutineTimer();
+        dailyRoutineScheduler.start();
 
         // 立即发送一次状态
         syncStatus();

@@ -44,8 +44,8 @@ function errorMessage(error: unknown): string {
     return error instanceof Error && error.message ? error.message : String(error);
 }
 
-function getBeijingDateKey(): string {
-    const nowSec = getServerTimeSec();
+export function getBeijingDateKey(timestampSec?: number): string {
+    const nowSec = timestampSec === undefined ? getServerTimeSec() : Number(timestampSec);
     const nowMs = nowSec > 0 ? nowSec * 1000 : Date.now();
     const date = new Date(nowMs + 8 * 3600 * 1000);
     const year = date.getUTCFullYear();

@@ -68,11 +68,13 @@ message ConstellationData {
 
 message ActivityData {
     ActivityContent activity = 1;
+    repeated ActivityData children = 2;
     StarSandGoodsList catalog = 102;
     QingMeiDailySeedData qingmei_daily_seed = 103;
     QingMeiBrewData qingmei_brew = 108;
     ConstellationData constellation = 110;
-    QingMeiBrewStarted qingmei_brew_started = 113;
+    QixiBridgeConfig qixi_bridge = 112;
+    QixiGiftProgress qixi_gift = 113;
     QingMeiQuote qingmei_quote = 114;
 }
 
@@ -88,6 +90,14 @@ message ActivityListRequest {}
 message ActivityListReply {
     repeated ActivityData activities = 1;
     repeated ActivityWindow activity_windows = 2;
+}
+
+message GetGroupRequest {
+    int64 group_id = 1;
+}
+
+message GetGroupReply {
+    ActivityData group = 1;
 }
 
 message QingMeiDailySeedGrant {
@@ -110,6 +120,33 @@ message QingMeiBrewData {
     int64 base_price = 7;
     repeated int64 ingredient_item_ids = 8 [packed = true];
     int64 guaranteed_price = 9;
+}
+
+message QixiBridgeStage {
+    int64 stage = 1;
+    ActivityItem cost = 2;
+    repeated ActivityItem rewards = 3;
+    int64 status = 4;
+}
+
+message QixiBridgeConfig {
+    repeated ActivityItem display_items = 1;
+    repeated QixiBridgeStage stages = 2;
+    int64 current_stage = 3;
+}
+
+message QixiGiftExchange {
+    repeated ActivityItem cost_items = 1;
+    repeated ActivityItem receive_items = 2;
+    int64 gift_type = 3;
+    int64 content = 4;
+}
+
+message QixiGiftProgress {
+    int64 total_send_count = 1;
+    int64 total_send_limit = 2;
+    int64 total_receive_limit = 3;
+    repeated QixiGiftExchange gifts = 4;
 }
 
 message QingMeiBrewStarted {
@@ -187,6 +224,33 @@ message SettleQingMeiBrewRequest {
     Params params = 114;
 }
 
+message ClaimQixiBridgeRewardsRequest {
+    message Params { int64 step = 1; }
+    int64 activity_id = 1;
+    int64 operate_type = 2;
+    Params params = 125;
+}
+
+message GiftQixiSachetRequest {
+    message Params {
+        int64 target_gid = 1;
+        int64 msg_text_id = 2;
+    }
+    int64 activity_id = 1;
+    int64 operate_type = 2;
+    Params params = 124;
+}
+
+message QixiGiftResult {
+    int64 total_send_count = 1;
+}
+
+message QixiBridgeRewardResult {
+    repeated int64 unlocked_steps = 1 [packed = true];
+    repeated corepb.Item awards = 2;
+    bool completed = 3;
+}
+
 message ActivityOperateReply {
     int64 activity_id = 1;
     int64 operate_type = 2;
@@ -195,8 +259,11 @@ message ActivityOperateReply {
     QingMeiBrewStarted qingmei_brew_started = 113;
     QingMeiQuote qingmei_quote = 114;
     QingMeiSettlement qingmei_settlement = 115;
+    QixiGiftResult qixi_gift_result = 125;
+    QixiBridgeRewardResult qixi_bridge_result = 126;
 }
 
 message ActiviesChangeNotify {
-    repeated ActivityContent activities = 1;
+    // 抓包确认推送包含父活动及 children，而不只是平铺 ActivityContent。
+    repeated ActivityData activities = 1;
 }

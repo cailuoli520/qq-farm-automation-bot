@@ -137,9 +137,15 @@ function createDataProvider(options: DataProviderOptions): DataProvider {
         doFriendOp: (accountRef, gid, opType) => callWorkerApi(resolveAccountRefId(accountRef), 'doFriendOp', gid, opType),
         getBag: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getBag'),
         getBagSeeds: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getBagSeeds'),
+        getIllustratedSnapshot: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getIllustratedSnapshot'),
+        getPetInfo: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getPetInfo'),
+        deployDog: (accountRef, dogId) => callWorkerApi(resolveAccountRefId(accountRef), 'deployDog', dogId),
+        withdrawDog: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'withdrawDog'),
+        useDogFood: (accountRef, itemId, count) => callWorkerApi(resolveAccountRefId(accountRef), 'useDogFood', itemId, count),
         getDiamondBalance: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getDiamondBalance'),
         useItem: (accountRef, itemId, count, uid = 0) => callWorkerApi(resolveAccountRefId(accountRef), 'useItem', itemId, count, uid),
         sellItems: (accountRef, items) => callWorkerApi(resolveAccountRefId(accountRef), 'sellItems', items),
+        setItemsLocked: (accountRef, itemUids, locked) => callWorkerApi(resolveAccountRefId(accountRef), 'setItemsLocked', itemUids, locked),
         getDailyGifts: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getDailyGiftOverview'),
         getSeeds: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getSeeds'),
 
@@ -149,6 +155,7 @@ function createDataProvider(options: DataProviderOptions): DataProvider {
         getCurrentStarSandShop: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentStarSandShop'),
         getCurrentSolarTerms: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentSolarTerms'),
         getCurrentQingMeiActivity: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentQingMeiActivity'),
+        getCurrentQixiActivity: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentQixiActivity'),
         claimBattlePassRewards: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'claimBattlePassRewards'),
         exchangeStarSandGoods: (accountRef, goodsId, count) => callWorkerApi(resolveAccountRefId(accountRef), 'exchangeStarSandGoods', goodsId, count),
         lightConstellation: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'lightConstellation'),
@@ -157,6 +164,10 @@ function createDataProvider(options: DataProviderOptions): DataProvider {
         startQingMeiBrew: (accountRef, ingredients) => callWorkerApi(resolveAccountRefId(accountRef), 'startQingMeiBrew', ingredients),
         continueQingMeiBrew: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'continueQingMeiBrew'),
         settleQingMeiBrew: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'settleQingMeiBrew'),
+        claimQixiBridgeRewards: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'claimQixiBridgeRewards'),
+        giftQixiSachet: (accountRef, friendGid, messageTextId) => callWorkerApi(resolveAccountRefId(accountRef), 'giftQixiSachet', friendGid, messageTextId),
+        getQixiDewTargets: (accountRef, hostGid) => callWorkerApi(resolveAccountRefId(accountRef), 'getQixiDewTargets', hostGid),
+        useQixiDew: (accountRef, hostGid, landId) => callWorkerApi(resolveAccountRefId(accountRef), 'useQixiDew', hostGid, landId),
 
         setAutomation: async (accountRef, key, value) => {
             const accountId = resolveAccountRefId(accountRef);

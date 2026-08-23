@@ -24,6 +24,20 @@ const ACTIVITY_ERROR_MESSAGES: Record<string, string> = {
     NO_PASS_REWARD: '当前没有可领取的游记奖励，请完成新的游记等级后再试',
     SHOP_RESPONSE_INVALID: '商店数据已经变化，请刷新页面后重试',
     SHOP_UNAVAILABLE: '星砂商店暂未开放，请稍后再来看看',
+    QIXI_UNAVAILABLE: '鹊桥寄情活动暂未开放或已经结束',
+    QIXI_BRIDGE_UNAVAILABLE: '当前没有可领取的鹊桥奖励',
+    QIXI_GIFT_UNAVAILABLE: '当前无法赠送鹊羽香囊',
+    INVALID_QIXI_FRIEND_GID: '好友信息无效，请重新选择',
+    INVALID_QIXI_MESSAGE_TEXT_ID: '祝福文案信息无效，请刷新活动后重试',
+    QIXI_RESPONSE_INVALID: '鹊桥活动数据已经变化，请刷新后重试',
+    QIXI_DEW_ACCOUNT_UNAVAILABLE: '当前账号尚未就绪，请稍后重试',
+    INVALID_QIXI_DEW_HOST_GID: '农场主人信息无效，请重新选择',
+    INVALID_QIXI_DEW_LAND_ID: '地块信息无效，请刷新后重选',
+    QIXI_DEW_UNAVAILABLE: '活动未进行，鹊羽灵露当前不可使用',
+    INSUFFICIENT_QIXI_DEW: '背包中没有可用的鹊羽灵露',
+    QIXI_DEW_HOST_MISMATCH: '进入的农场与所选好友不一致，请刷新后重试',
+    QIXI_DEW_TARGET_UNAVAILABLE: '所选地块已不再可用，请刷新后重选',
+    QIXI_DEW_NO_EFFECT: '该地块未触发灵露效果，作物品级或状态可能不符合条件',
 };
 
 function activityErrorResponse(error: unknown): { code: string; message: string } {
@@ -73,6 +87,8 @@ export function registerActivityRoutes(context: ActivityRoutesContext): void {
     mountGet('/api/activity-center/shop', 'getCurrentStarSandShop');
     mountGet('/api/activity-center/solar-terms', 'getCurrentSolarTerms');
     mountGet('/api/activity-center/qingmei', 'getCurrentQingMeiActivity');
+    mountGet('/api/activity-center/qixi', 'getCurrentQixiActivity');
+    app.get('/api/activity-center/qixi/dew/targets', withActivityAccount((accountId, request) => provider.getQixiDewTargets(accountId, request.query?.hostGid)));
     app.post('/api/activity-center/pass/claim', withActivityAccount(accountId => provider.claimBattlePassRewards(accountId)));
     app.post('/api/activity-center/constellation/light', withActivityAccount(accountId => provider.lightConstellation(accountId)));
     app.post('/api/activity-center/shop/exchange', withActivityAccount((accountId, request) => provider.exchangeStarSandGoods(accountId, request.body?.goodsId, request.body?.count)));
@@ -88,4 +104,7 @@ export function registerActivityRoutes(context: ActivityRoutesContext): void {
     app.post('/api/activity-center/qingmei/brew/start', withActivityAccount((accountId, request) => provider.startQingMeiBrew(accountId, request.body?.ingredients)));
     app.post('/api/activity-center/qingmei/brew/continue', withActivityAccount(accountId => provider.continueQingMeiBrew(accountId)));
     app.post('/api/activity-center/qingmei/brew/settle', withActivityAccount(accountId => provider.settleQingMeiBrew(accountId)));
+    app.post('/api/activity-center/qixi/bridge/claim', withActivityAccount(accountId => provider.claimQixiBridgeRewards(accountId)));
+    app.post('/api/activity-center/qixi/gift', withActivityAccount((accountId, request) => provider.giftQixiSachet(accountId, request.body?.friendGid, request.body?.messageTextId)));
+    app.post('/api/activity-center/qixi/dew/use', withActivityAccount((accountId, request) => provider.useQixiDew(accountId, request.body?.hostGid, request.body?.landId)));
 }

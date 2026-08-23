@@ -1,11 +1,93 @@
 const { PHASE_NAMES, PlantPhase } = require('../config/config');
-const { getPlantExp, getPlantName } = require('../config/gameConfig');
+const { getItemById, getPlantExp, getPlantName } = require('../config/gameConfig');
 const { getServerTimeSec, toNum, toTimeSec } = require('../utils/utils');
 
 type DynamicRecord = Record<string, any>;
 export type LandType = 'gold' | 'black' | 'red' | 'normal';
 
 export const ALL_FERTILIZER_LAND_TYPES: LandType[] = ['gold', 'black', 'red', 'normal'];
+
+// 抓包确认：这两类当前互动状态可由农场主通过 Farming 一键清理。
+const OWNER_CLEANABLE_INTERACTION_ITEM_IDS = new Set(['301101', '301102']);
+
+function normalizePositiveId(value: unknown): string {
+    if (value === null || value === undefined) return '';
+    const text = typeof (value as DynamicRecord)?.toString === 'function'
+        ? String((value as DynamicRecord).toString())
+        : String(value);
+    return /^\d+$/.test(text) && text !== '0' ? text : '';
+}
+
+function interactionEntryKey(entry: DynamicRecord): string {
+    return [
+        normalizePositiveId(entry.item_id),
+        normalizePositiveId(entry.host_gid),
+        normalizePositiveId(entry.timestamp),
+        normalizePositiveId(entry.land_id),
+    ].join(':');
+}
+
+function interactionEffect(entry: DynamicRecord): DynamicRecord | null {
+    const itemId = normalizePositiveId(entry?.item_id);
+    if (!itemId) return null;
+    const item = getItemById(Number(itemId));
+    return {
+        itemId,
+        itemName: String(item?.name || (itemId === '301101' ? '黄金虫' : itemId === '301102' ? '足球' : `道具${itemId}`)),
+        effectType: toNum(entry?.effect_type),
+        landId: normalizePositiveId(entry?.land_id),
+        hostGid: normalizePositiveId(entry?.host_gid),
+        usedAt: normalizePositiveId(entry?.timestamp),
+        cleanable: OWNER_CLEANABLE_INTERACTION_ITEM_IDS.has(itemId),
+    };
+}
+
+export function getPlantInteractionEffects(plant: DynamicRecord | null | undefined): DynamicRecord[] {
+    const uses = Array.isArray(plant?.interaction_uses) ? plant.interaction_uses : [];
+    const targets = Array.isArray(plant?.interaction_targets) ? plant.interaction_targets : [];
+    const effects: DynamicRecord[] = [];
+    const seen = new Set<string>();
+    const usedTargets = new Set<DynamicRecord>();
+
+    const append = (entry: DynamicRecord): void => {
+        const effect = interactionEffect(entry);
+        if (!effect) return;
+        const key = interactionEntryKey(entry);
+        if (seen.has(key)) return;
+        seen.add(key);
+        effects.push(effect);
+    };
+
+    for (const use of uses) {
+        const itemId = normalizePositiveId(use?.item_id);
+        const hostGid = normalizePositiveId(use?.host_gid);
+        const timestamp = normalizePositiveId(use?.timestamp);
+        let matches = targets.filter((target: DynamicRecord) => (
+            normalizePositiveId(target?.item_id) === itemId
+            && (!hostGid || normalizePositiveId(target?.host_gid) === hostGid)
+            && (!timestamp || normalizePositiveId(target?.timestamp) === timestamp)
+        ));
+        if (matches.length === 0) {
+            matches = targets.filter((target: DynamicRecord) => normalizePositiveId(target?.item_id) === itemId);
+        }
+        if (matches.length === 0) {
+            append(use);
+            continue;
+        }
+        for (const target of matches) {
+            usedTargets.add(target);
+            append({ ...use, ...target, effect_type: use.effect_type });
+        }
+    }
+    for (const target of targets) {
+        if (!usedTargets.has(target)) append(target);
+    }
+    return effects;
+}
+
+export function hasOwnerCleanableInteraction(plant: DynamicRecord | null | undefined): boolean {
+    return getPlantInteractionEffects(plant).some(effect => effect.cleanable);
+}
 const FERTILIZER_LAND_TYPE_LABELS: Record<LandType, string> = {
     gold: '金土地',
     black: '黑土地',
@@ -228,6 +310,7 @@ export function analyzeLands(lands: DynamicRecord[], debug = false): DynamicReco
         needWater: [],
         needWeed: [],
         needBug: [],
+        needInteractionCleanup: [],
         growing: [],
         empty: [],
         dead: [],
@@ -256,6 +339,7 @@ export function analyzeLands(lands: DynamicRecord[], debug = false): DynamicReco
             result.empty.push(id);
             continue;
         }
+        if (hasOwnerCleanableInteraction(plant)) result.needInteractionCleanup.push(id);
         if (phase.phase === PlantPhase.DEAD) {
             result.dead.push(id);
             continue;

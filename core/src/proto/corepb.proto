@@ -12,6 +12,7 @@ message Item {
     int64 uid = 6;          // UID
     bool is_new = 7;        // 是否新获得
     repeated int64 mutant_types = 8; // 变异类型
+    bool locked = 9;         // 是否已锁定
     bytes show = 100;       // 服务端展示扩展；业务暂不解析但需保留原始内容
 }
 
