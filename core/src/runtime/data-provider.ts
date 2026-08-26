@@ -159,6 +159,8 @@ function createDataProvider(options: DataProviderOptions): DataProvider {
         getCurrentSolarTerms: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentSolarTerms'),
         getCurrentQingMeiActivity: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentQingMeiActivity'),
         getCurrentQixiActivity: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentQixiActivity'),
+        getCurrentRainPoetryActivity: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentRainPoetryActivity'),
+        getRainPoetryWeather: (accountRef, friendGid) => callWorkerApi(resolveAccountRefId(accountRef), 'getRainPoetryWeather', friendGid),
         claimBattlePassRewards: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'claimBattlePassRewards'),
         exchangeStarSandGoods: (accountRef, goodsId, count) => callWorkerApi(resolveAccountRefId(accountRef), 'exchangeStarSandGoods', goodsId, count),
         lightConstellation: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'lightConstellation'),
@@ -171,6 +173,10 @@ function createDataProvider(options: DataProviderOptions): DataProvider {
         giftQixiSachet: (accountRef, friendGid, messageTextId) => callWorkerApi(resolveAccountRefId(accountRef), 'giftQixiSachet', friendGid, messageTextId),
         getQixiDewTargets: (accountRef, hostGid) => callWorkerApi(resolveAccountRefId(accountRef), 'getQixiDewTargets', hostGid),
         useQixiDew: (accountRef, hostGid, landId) => callWorkerApi(resolveAccountRefId(accountRef), 'useQixiDew', hostGid, landId),
+        exchangeRainBottle: (accountRef, goodsId, count) => callWorkerApi(resolveAccountRefId(accountRef), 'exchangeRainBottle', goodsId, count),
+        collectRainWeather: (accountRef, friendGid) => callWorkerApi(resolveAccountRefId(accountRef), 'collectRainWeather', friendGid),
+        useRainThunderstorm: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'useRainThunderstorm'),
+        unlockRainResearch: (accountRef, nodeId) => callWorkerApi(resolveAccountRefId(accountRef), 'unlockRainResearch', nodeId),
 
         setAutomation: async (accountRef, key, value) => {
             const accountId = resolveAccountRefId(accountRef);

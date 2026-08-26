@@ -379,6 +379,8 @@ test('活动路由只保留活动中心操作，不再暴露神秘商人手动�
         'GET /api/activity-center/solar-terms',
         'GET /api/activity-center/qingmei',
         'GET /api/activity-center/qixi',
+        'GET /api/activity-center/rain-poetry',
+        'GET /api/activity-center/rain-poetry/weather',
         'GET /api/activity-center/qixi/dew/targets',
         'POST /api/activity-center/pass/claim',
         'POST /api/activity-center/constellation/light',
@@ -391,6 +393,10 @@ test('活动路由只保留活动中心操作，不再暴露神秘商人手动�
         'POST /api/activity-center/qixi/bridge/claim',
         'POST /api/activity-center/qixi/gift',
         'POST /api/activity-center/qixi/dew/use',
+        'POST /api/activity-center/rain-poetry/exchange',
+        'POST /api/activity-center/rain-poetry/collect',
+        'POST /api/activity-center/rain-poetry/thunderstorm/use',
+        'POST /api/activity-center/rain-poetry/research/unlock',
     ]);
     assert.equal(routes.some(route => route.includes('mystery-shop')), false);
 });

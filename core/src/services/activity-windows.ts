@@ -80,6 +80,11 @@ export async function getSellConditionContext(): Promise<SellConditionContext> {
     return getCachedSellConditionContext();
 }
 
+export async function getActivityWindows(): Promise<ReadonlyMap<string, ActivityWindow>> {
+    const context = await getSellConditionContext();
+    return context.activityWindows || new Map();
+}
+
 export async function getPreviewSellConditionContext(
     timeoutMs = PREVIEW_CONTEXT_TIMEOUT_MS,
 ): Promise<SellConditionContext> {

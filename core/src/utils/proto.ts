@@ -39,6 +39,7 @@ async function loadProto(): Promise<void> {
         getResourcePath('proto', 'mysteryshoppb.proto'),
         getResourcePath('proto', 'paypb.proto'),
         getResourcePath('proto', 'dogpb.proto'),
+        getResourcePath('proto', 'weatherpb.proto'),
     ], { keepCase: true });
 
     // 网关
@@ -244,12 +245,17 @@ async function loadProto(): Promise<void> {
     types.SettleQingMeiBrewRequest = root.lookupType('gamepb.activitypb.SettleQingMeiBrewRequest');
     types.ClaimQixiBridgeRewardsRequest = root.lookupType('gamepb.activitypb.ClaimQixiBridgeRewardsRequest');
     types.GiftQixiSachetRequest = root.lookupType('gamepb.activitypb.GiftQixiSachetRequest');
+    types.CollectRainWeatherRequest = root.lookupType('gamepb.activitypb.CollectRainWeatherRequest');
+    types.UnlockRainResearchRequest = root.lookupType('gamepb.activitypb.UnlockRainResearchRequest');
     types.ActivityOperateReply = root.lookupType('gamepb.activitypb.ActivityOperateReply');
     types.ActiviesChangeNotify = root.lookupType('gamepb.activitypb.ActiviesChangeNotify');
     types.GetSolarTermsRequest = root.lookupType('gamepb.solartermspb.GetSolarTermsRequest');
     types.GetSolarTermsReply = root.lookupType('gamepb.solartermspb.GetSolarTermsReply');
     types.ClaimSolarTermsRequest = root.lookupType('gamepb.solartermspb.ClaimSolarTermsRequest');
     types.ClaimSolarTermsReply = root.lookupType('gamepb.solartermspb.ClaimSolarTermsReply');
+    types.QingMeiQuote = root.lookupType('gamepb.activitypb.QingMeiQuote');
+    types.GetWeatherStatusRequest = root.lookupType('gamepb.weatherpb.GetWeatherStatusRequest');
+    types.GetWeatherStatusReply = root.lookupType('gamepb.weatherpb.GetWeatherStatusReply');
 
     // Proto 加载完成
     log('系统', 'Protobuf 定义加载完成');

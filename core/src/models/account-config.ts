@@ -102,6 +102,7 @@ export const DEFAULT_ACCOUNT_CONFIG: AccountConfig = {
         friend_steal: true,
         friend_help: true,
         friend_bad: false,
+        rain_poetry_auto: true,
         task: true,
         fertilizer_gift: false,
         fertilizer_buy_organic: false,

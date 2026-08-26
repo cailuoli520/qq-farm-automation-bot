@@ -3,12 +3,14 @@ import type { MasterToWorkerMessage, WorkerToMasterMessage, WxCredentialAction }
 import type { WorkerBattlePassPushRuntime } from '../runtime/worker-battle-pass';
 import type { WorkerMysteryShopRuntime } from '../runtime/worker-mystery-shop';
 import type { WorkerPetGiftRuntime } from '../runtime/worker-pet-gifts';
+import type { WorkerRainPoetryRuntime } from '../runtime/worker-rain-poetry';
 import { assertNever } from '../types/ipc';
 import { createWorkerApiHandler, createWorkerApiMethods } from '../runtime/worker-api';
 import { createWorkerAutomationScheduler } from '../runtime/worker-automation-scheduler';
 import { createWorkerDailyRoutineScheduler } from '../runtime/worker-daily-routine-scheduler';
 import { getDailyGiftOverview } from '../runtime/worker-daily-gifts';
 import { createWorkerStatusSynchronizer } from '../runtime/worker-status-sync';
+import { createWorkerRainPoetryRuntime } from '../runtime/worker-rain-poetry';
 /**
  * 子进程 Worker - 负责运行单个账号的挂机逻辑
  */
@@ -95,6 +97,7 @@ let onFarmHarvested: (() => Promise<void>) | null = null;
 let battlePassPushRuntime: WorkerBattlePassPushRuntime | null = null;
 let mysteryShopRuntime: WorkerMysteryShopRuntime | null = null;
 let petGiftRuntime: WorkerPetGiftRuntime | null = null;
+let rainPoetryRuntime: WorkerRainPoetryRuntime | null = null;
 let harvestSellRunning = false;
 let onWsError: ((payload: DynamicRecord) => void) | null = null;
 let wsErrorHandledAt = 0;
@@ -120,6 +123,7 @@ const dailyRoutineScheduler = createWorkerDailyRoutineScheduler({
     runStartupRoutines: () => runDailyRoutines(true),
     runCrossDayRoutines: async () => {
         await runDailyRoutines(true);
+        void rainPoetryRuntime?.checkNow('cross-day');
         await runBadOncePerDay();
     },
     scheduler: workerScheduler,
@@ -181,6 +185,8 @@ function cleanupWorkerResources(): void {
     mysteryShopRuntime = null;
     try { petGiftRuntime?.stop(); } catch {}
     petGiftRuntime = null;
+    try { rainPoetryRuntime?.stop(); } catch {}
+    rainPoetryRuntime = null;
     try { stopAceRuntime(true); } catch {}
     try { cleanup('worker exit'); } catch {}
     try { workerScheduler.clearAll(); } catch {}
@@ -366,6 +372,16 @@ function applyRuntimeConfig(snapshot: DynamicRecord, syncNow = false): void {
                     mysteryShopRuntime?.checkNow().catch(() => null);
                 });
             }
+
+            if (prevAuto?.rain_poetry_auto && !nextAuto?.rain_poetry_auto) {
+                rainPoetryRuntime?.stop();
+            } else if (!prevAuto?.rain_poetry_auto && nextAuto?.rain_poetry_auto) {
+                rainPoetryRuntime?.start();
+                workerScheduler.setTimeoutTask('rain_poetry_immediate_after_save', 400, () => {
+                    if (!loginReady) return;
+                    rainPoetryRuntime?.checkNow('config-enabled').catch(() => null);
+                });
+            }
         }
     }
 
@@ -538,6 +554,16 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
     mysteryShopRuntime = mysteryRuntime;
     mysteryRuntime.start();
 
+    const rainRuntime: WorkerRainPoetryRuntime = rainPoetryRuntime
+        || createWorkerRainPoetryRuntime({
+            getAutomation,
+            isLifecycleActive,
+            log,
+            scheduler: workerScheduler,
+            service: require('../services/activity'),
+        });
+    rainPoetryRuntime = rainRuntime;
+
     // 服务端版本前缀校准结果上报主进程（用于持久化，跨重启生效）
     networkEvents.on('versionPrefixChanged', (prefix: unknown) => {
         sendToMaster({ type: 'version_prefix_update', prefix: String(prefix || '') });
@@ -642,6 +668,11 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
             await openFertilizerGiftPacksSilently().catch(() => 0);
         }
         if (!isLifecycleActive()) return;
+
+        rainRuntime.start();
+        workerScheduler.setTimeoutTask('rain_poetry_login', 1000, () => {
+            rainRuntime.checkNow('login').catch(() => null);
+        });
         
         // 启动时执行当天的放虫放草；跨日后由每日调度再次触发。
         workerScheduler.setTimeoutTask('bad_daily_once', 20000, async () => {

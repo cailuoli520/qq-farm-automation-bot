@@ -38,6 +38,15 @@ const ACTIVITY_ERROR_MESSAGES: Record<string, string> = {
     QIXI_DEW_HOST_MISMATCH: '进入的农场与所选好友不一致，请刷新后重试',
     QIXI_DEW_TARGET_UNAVAILABLE: '所选地块已不再可用，请刷新后重选',
     QIXI_DEW_NO_EFFECT: '该地块未触发灵露效果，作物品级或状态可能不符合条件',
+    RAIN_POETRY_UNAVAILABLE: '雨落成诗活动暂未开放或已经结束',
+    INVALID_RAIN_FRIEND_GID: '好友信息无效，请重新选择',
+    RAIN_FRIEND_MISMATCH: '进入的农场与所选好友不一致，请刷新后重试',
+    RAIN_WEATHER_UNAVAILABLE: '该好友农场当前不是雷雨天气',
+    RAIN_COLLECT_UNAVAILABLE: '背包中没有可用的天气采集瓶',
+    RAIN_THUNDERSTORM_UNAVAILABLE: '当前已有特殊天气，或背包中没有雷雨召唤瓶',
+    RAIN_EXCHANGE_UNAVAILABLE: '该天气瓶当前不可兑换',
+    RAIN_RESEARCH_UNAVAILABLE: '该研究节点尚不可解锁或雷电徽章不足',
+    RAIN_RESPONSE_INVALID: '雨落成诗活动状态已经变化，请刷新后重试',
 };
 
 function activityErrorResponse(error: unknown): { code: string; message: string } {
@@ -88,6 +97,8 @@ export function registerActivityRoutes(context: ActivityRoutesContext): void {
     mountGet('/api/activity-center/solar-terms', 'getCurrentSolarTerms');
     mountGet('/api/activity-center/qingmei', 'getCurrentQingMeiActivity');
     mountGet('/api/activity-center/qixi', 'getCurrentQixiActivity');
+    mountGet('/api/activity-center/rain-poetry', 'getCurrentRainPoetryActivity');
+    app.get('/api/activity-center/rain-poetry/weather', withActivityAccount((accountId, request) => provider.getRainPoetryWeather(accountId, request.query?.friendGid)));
     app.get('/api/activity-center/qixi/dew/targets', withActivityAccount((accountId, request) => provider.getQixiDewTargets(accountId, request.query?.hostGid)));
     app.post('/api/activity-center/pass/claim', withActivityAccount(accountId => provider.claimBattlePassRewards(accountId)));
     app.post('/api/activity-center/constellation/light', withActivityAccount(accountId => provider.lightConstellation(accountId)));
@@ -107,4 +118,8 @@ export function registerActivityRoutes(context: ActivityRoutesContext): void {
     app.post('/api/activity-center/qixi/bridge/claim', withActivityAccount(accountId => provider.claimQixiBridgeRewards(accountId)));
     app.post('/api/activity-center/qixi/gift', withActivityAccount((accountId, request) => provider.giftQixiSachet(accountId, request.body?.friendGid, request.body?.messageTextId)));
     app.post('/api/activity-center/qixi/dew/use', withActivityAccount((accountId, request) => provider.useQixiDew(accountId, request.body?.hostGid, request.body?.landId)));
+    app.post('/api/activity-center/rain-poetry/exchange', withActivityAccount((accountId, request) => provider.exchangeRainBottle(accountId, request.body?.goodsId, request.body?.count)));
+    app.post('/api/activity-center/rain-poetry/collect', withActivityAccount((accountId, request) => provider.collectRainWeather(accountId, request.body?.friendGid)));
+    app.post('/api/activity-center/rain-poetry/thunderstorm/use', withActivityAccount(accountId => provider.useRainThunderstorm(accountId)));
+    app.post('/api/activity-center/rain-poetry/research/unlock', withActivityAccount((accountId, request) => provider.unlockRainResearch(accountId, request.body?.nodeId)));
 }

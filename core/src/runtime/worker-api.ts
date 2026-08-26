@@ -85,6 +85,8 @@ export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<
         getCurrentSolarTerms: () => require('../services/activity').getCurrentSolarTerms(),
         getCurrentQingMeiActivity: () => require('../services/activity').getCurrentQingMeiActivity(),
         getCurrentQixiActivity: () => require('../services/activity').getCurrentQixiActivity(),
+        getCurrentRainPoetryActivity: () => require('../services/activity').getCurrentRainPoetryActivity(),
+        getRainPoetryWeather: args => require('../services/activity').getRainPoetryWeather(args[0]),
         claimBattlePassRewards: () => require('../services/activity').claimBattlePassRewards(),
         exchangeStarSandGoods: args => require('../services/activity').exchangeStarSandGoods(args[0], args[1]),
         lightConstellation: () => require('../services/activity').lightConstellation(),
@@ -97,6 +99,10 @@ export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<
         giftQixiSachet: args => require('../services/activity').giftQixiSachet(args[0], args[1]),
         getQixiDewTargets: args => require('../services/activity').getQixiDewTargets(args[0]),
         useQixiDew: args => require('../services/activity').useQixiDew(args[0], args[1]),
+        exchangeRainBottle: args => require('../services/activity').exchangeRainBottle(args[0], args[1]),
+        collectRainWeather: args => require('../services/activity').collectRainWeather(args[0]),
+        useRainThunderstorm: () => require('../services/activity').useRainThunderstorm(),
+        unlockRainResearch: args => require('../services/activity').unlockRainResearch(args[0]),
     };
 }
 

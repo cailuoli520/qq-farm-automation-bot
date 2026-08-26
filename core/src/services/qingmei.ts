@@ -4,7 +4,7 @@ import type protobuf from 'protobufjs';
 import { getItemDisplayById } from '../config/gameConfig';
 import { GatewayError, sendMsgAsync } from '../utils/network';
 import { types } from '../utils/proto';
-import { toLong, toNum } from '../utils/utils';
+import { getServerTimeSec, toLong, toNum } from '../utils/utils';
 import { reportActivityShare } from './share';
 import { asRecord, recordArray  } from './service-boundaries';
 import type {UnknownRecord} from './service-boundaries';
@@ -171,13 +171,20 @@ async function queryReply(timeoutOrOptions: TimeoutOrOptions = 20000) {
     return operate(types.QueryActivityRequest, { activity_id: toLong(BREW_ACTIVITY_ID), operate_type: OPERATE_QUERY }, timeoutOrOptions);
 }
 
+function decodeQingMeiQuote(value: unknown): unknown {
+    if (!value) return null;
+    if (!(value instanceof Uint8Array) && !Buffer.isBuffer(value)) return value;
+    if ((value as Uint8Array).byteLength === 0) return null;
+    return types.QingMeiQuote.decode(value as Uint8Array);
+}
+
 function normalize(reply: unknown, ingredients: QingMeiIngredient[] | null = null) {
     const source = asRecord(reply);
     const data = asRecord(source.data);
     const activity = asRecord(data.activity);
     const brew = asRecord(data.qingmei_brew);
     const dailySeed = asRecord(data.qingmei_daily_seed);
-    const quote = source.qingmei_quote || data.qingmei_quote;
+    const quote = source.qingmei_quote || decodeQingMeiQuote(data.extension_114);
     const quotes = buildQuoteHistory(brew, quote);
     const normalizedQuote = normalizeQuote(quote);
     const currentRound = toNum(brew.current_round);
@@ -192,6 +199,7 @@ function normalize(reply: unknown, ingredients: QingMeiIngredient[] | null = nul
         name: String(activity.name || '青酿换万金'),
         startTime: int64String(activity.begin_time),
         endTime: int64String(activity.end_time),
+        serverTime: String(getServerTimeSec()),
         ingredient: itemDto({ id: QINGMEI_ITEM_ID, count: balance }),
         ingredients: availableIngredients,
         balance,
@@ -271,7 +279,7 @@ async function startBrew(input: unknown) {
 
 async function continueBrew() {
     const reply = asRecord(await operate(types.ContinueQingMeiBrewRequest, { activity_id: toLong(BREW_ACTIVITY_ID), operate_type: OPERATE_CONTINUE, params: {} }));
-    const quote = reply.qingmei_quote || asRecord(reply.data).qingmei_quote;
+    const quote = reply.qingmei_quote || decodeQingMeiQuote(asRecord(reply.data).extension_114);
     const normalizedQuote = rememberQuote(quote);
     return { message: normalizedQuote ? `第 ${normalizedQuote.round} 轮报价：${normalizedQuote.totalGold} 金币` : '酿造进度已更新' };
 }

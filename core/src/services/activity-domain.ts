@@ -11,6 +11,7 @@ const { capturePostMutationSnapshot, retryFailedSnapshotSection } = require("../
 const { getBag, getBagItems } = require("./warehouse");
 const qingmei = require("./qingmei");
 const qixi = require("./qixi");
+const rainPoetry = require("./rain-poetry");
 const {
   activityDto: mapActivityDto,
   bytesToText,
@@ -579,7 +580,8 @@ function buildActions(
   solarTerms: DynamicRecord | null,
   constellation: DynamicRecord | null = null,
   shop: DynamicRecord | null = null,
-  qixiActivity: DynamicRecord | null = null
+  qixiActivity: DynamicRecord | null = null,
+  rainActivity: DynamicRecord | null = null
 ): DynamicRecord {
   const hasPass = !!season?.pass;
   const claimablePassCount = hasPass ? season!.pass.nodes.filter((node: DynamicRecord) => node.claimable).length : 0;
@@ -621,7 +623,11 @@ function buildActions(
     },
     qixiBridge: qixiActivity?.actions?.bridge || { enabled: false, available: false, availabilityKnown: false },
     qixiGift: qixiActivity?.actions?.gift || { enabled: false, available: false, availabilityKnown: false },
-    qixiDew: qixiActivity?.actions?.dew || { enabled: false, available: false, availabilityKnown: false }
+    qixiDew: qixiActivity?.actions?.dew || { enabled: false, available: false, availabilityKnown: false },
+    rainExchange: rainActivity?.actions?.exchange || { enabled: false, available: false, availabilityKnown: false },
+    rainCollect: rainActivity?.actions?.collect || { enabled: false, available: false, availabilityKnown: false },
+    rainThunderstorm: rainActivity?.actions?.thunderstorm || { enabled: false, available: false, availabilityKnown: false },
+    rainResearch: rainActivity?.actions?.research || { enabled: false, available: false, availabilityKnown: false }
   };
 }
 async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = null): Promise<DynamicRecord> {
@@ -671,8 +677,17 @@ async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = 
       return qixi.getCurrentQixiActivity(bagInput, timeout);
     }
   ]);
-  if (!rawSeason && solarResult.status === "rejected" && qingMeiResult.status === "rejected" && qixiResult.status === "rejected") {
-    const rejected = [seasonResult, solarResult, qingMeiResult, qixiResult, bagResult]
+  const [rainPoetryResult] = await settleSequentially<DynamicRecord | null>([
+    () => {
+      const timeout = nextSnapshotTimeout();
+      const bagInput = bagResult.status === "fulfilled"
+        ? bagResult.value
+        : Promise.reject(bagResult.reason);
+      return rainPoetry.getCurrentRainPoetryActivity(bagInput, timeout);
+    }
+  ]);
+  if (!rawSeason && solarResult.status === "rejected" && qingMeiResult.status === "rejected" && qixiResult.status === "rejected" && rainPoetryResult.status === "rejected") {
+    const rejected = [seasonResult, solarResult, qingMeiResult, qixiResult, rainPoetryResult, bagResult]
       .find((result): result is PromiseRejectedResult => result.status === "rejected");
     throw rejected?.reason || new Error("活动中心快照查询失败");
   }
@@ -689,7 +704,8 @@ async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = 
   ) : null;
   const qingMei = settledValue(qingMeiResult);
   const qixiActivity = settledValue(qixiResult);
-  const actions = buildActions(season, solarTerms, constellation, shop, qixiActivity);
+  const rainActivity = settledValue(rainPoetryResult);
+  const actions = buildActions(season, solarTerms, constellation, shop, qixiActivity, rainActivity);
   return {
     season,
     constellation,
@@ -697,6 +713,7 @@ async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = 
     solarTerms,
     qingMei,
     qixi: qixiActivity,
+    rainPoetry: rainActivity,
     capabilities: {
       claimPass: actions.claimPass.supported,
       lightConstellation: actions.lightConstellation.supported,
@@ -704,7 +721,11 @@ async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = 
       exchange: actions.exchange.supported,
       qixiBridge: !!qixiActivity,
       qixiGift: !!qixiActivity,
-      qixiDew: !!qixiActivity
+      qixiDew: !!qixiActivity,
+      rainExchange: !!rainActivity,
+      rainCollect: !!rainActivity,
+      rainThunderstorm: !!rainActivity,
+      rainResearch: !!rainActivity
     },
     actions,
     errors: {
@@ -712,7 +733,8 @@ async function buildActivityCenterSnapshot(shopOverride: DynamicRecord | null = 
       shop: settledError(shopResult),
       solarTerms: settledError(solarResult),
       qingMei: settledError(qingMeiResult),
-      qixi: settledError(qixiResult)
+      qixi: settledError(qixiResult),
+      rainPoetry: settledError(rainPoetryResult)
     }
   };
 }
@@ -749,6 +771,19 @@ async function withFreshQixiMutationSnapshot(result: DynamicRecord): Promise<Dyn
     })
   };
 }
+async function withFreshRainPoetryMutationSnapshot(result: DynamicRecord): Promise<DynamicRecord> {
+  return {
+    ...result,
+    ...await capturePostMutationSnapshot(async () => {
+      const snapshot = await getFreshActivityCenterSnapshot();
+      return retryFailedSnapshotSection(
+        snapshot,
+        "rainPoetry",
+        () => rainPoetry.getCurrentRainPoetryActivity(null, ACTIVITY_READ_TIMEOUT_MS)
+      );
+    })
+  };
+}
 async function getCurrentSeasonEvent(): Promise<DynamicRecord> {
   const seasonReply = await querySeason();
   const season = normalizeSeason(seasonReply);
@@ -776,6 +811,9 @@ async function getCurrentQingMeiActivity(): Promise<DynamicRecord> {
 }
 async function getCurrentQixiActivity(): Promise<DynamicRecord> {
   return qixi.getCurrentQixiActivity();
+}
+async function getCurrentRainPoetryActivity(): Promise<DynamicRecord | null> {
+  return rainPoetry.getCurrentRainPoetryActivity();
 }
 function serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
   return snapshotCoordinator.serializeMutation(operation);
@@ -1021,25 +1059,52 @@ async function getQixiDewTargets(hostGid: unknown): Promise<DynamicRecord> {
 async function useQixiDew(hostGid: unknown, landId: unknown): Promise<DynamicRecord> {
   return serializeMutation(async () => withFreshQixiMutationSnapshot(await qixi.useDew(hostGid, landId)));
 }
+async function getRainPoetryWeather(friendGid: unknown): Promise<DynamicRecord> {
+  return rainPoetry.getRainPoetryWeather(friendGid);
+}
+async function exchangeRainBottle(goodsId: unknown, count: unknown): Promise<DynamicRecord> {
+  return serializeMutation(async () => withFreshRainPoetryMutationSnapshot(await rainPoetry.exchangeRainBottle(goodsId, count)));
+}
+async function collectRainWeather(friendGid: unknown): Promise<DynamicRecord> {
+  return serializeMutation(async () => withFreshRainPoetryMutationSnapshot(await rainPoetry.collectRainWeather(friendGid)));
+}
+async function collectRainWeatherFromVisit(friendGid: unknown, enterReply: unknown, activity: unknown = null): Promise<DynamicRecord> {
+  // 当前仍处于好友农场会话中，不能在离开前查询完整活动快照，
+  // 否则天气分区可能读取到好友上下文。运行时会在 Leave 后统一刷新。
+  return serializeMutation(() => rainPoetry.collectRainWeatherFromVisit(friendGid, enterReply, activity));
+}
+async function useRainThunderstorm(): Promise<DynamicRecord> {
+  return serializeMutation(async () => withFreshRainPoetryMutationSnapshot(await rainPoetry.useRainThunderstorm()));
+}
+async function unlockRainResearch(nodeId: unknown): Promise<DynamicRecord> {
+  return serializeMutation(async () => withFreshRainPoetryMutationSnapshot(await rainPoetry.unlockRainResearch(nodeId)));
+}
 export {
   claimBattlePassRewards,
   claimQingMeiDailySeed,
   claimQixiBridgeRewards,
   claimSolarTerm,
+  collectRainWeather,
+  collectRainWeatherFromVisit,
   continueQingMeiBrew,
+  exchangeRainBottle,
   exchangeStarSandGoods,
   getActivityCenterSnapshot,
   getBattlePassNotifyClaimability,
   getCurrentQingMeiActivity,
   getCurrentQixiActivity,
+  getCurrentRainPoetryActivity,
   getCurrentSeasonEvent,
   getCurrentSolarTerms,
   getCurrentStarSandShop,
   getQixiDewTargets,
+  getRainPoetryWeather,
   giftQixiSachet,
   isNoBattlePassRewardError,
   lightConstellation,
   settleQingMeiBrew,
   startQingMeiBrew,
+  unlockRainResearch,
   useQixiDew,
+  useRainThunderstorm,
 };

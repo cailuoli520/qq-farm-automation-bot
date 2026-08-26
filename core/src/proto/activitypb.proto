@@ -75,7 +75,12 @@ message ActivityData {
     ConstellationData constellation = 110;
     QixiBridgeConfig qixi_bridge = 112;
     QixiGiftProgress qixi_gift = 113;
-    QingMeiQuote qingmei_quote = 114;
+    // tag 114 被不同活动复用：青梅为报价，雨落成诗为天气任务状态。
+    // 保留原始负载，由领域服务根据 activity_id/type 再解码，避免互相误读。
+    bytes extension_114 = 114;
+    WeatherCollectionConfig weather_collection = 105;
+    WeatherTaskList weather_tasks = 117;
+    WeatherResearchTree weather_research = 118;
 }
 
 message ActivityWindow {
@@ -160,6 +165,56 @@ message QingMeiQuote {
     bool doubled = 4;
 }
 
+message WeatherCollectionRewardConfig {
+    int64 id = 1;
+    ActivityItem item = 3;
+    int64 reward_type = 4;
+    string probability = 6;
+}
+
+message WeatherCollectionConfig {
+    int64 operate_type = 3;
+    int64 daily_limit = 4;
+    int64 consume_item_id = 5;
+    int64 consume_count = 6;
+    WeatherCollectionRewardConfig reward = 8;
+    bool enabled = 9;
+}
+
+message WeatherTask {
+    int64 task_id = 1;
+    int64 item_id = 2;
+    ActivityItem reward = 3;
+    string name = 4;
+    int64 target = 5;
+    int64 progress = 6;
+}
+
+message WeatherTaskList {
+    repeated WeatherTask tasks = 1;
+}
+
+message WeatherResearchNode {
+    int64 node_id = 1;
+    repeated int64 prerequisite_ids = 2 [packed = true];
+    int64 status = 3;
+    bool claimed = 4;
+    bool enabled = 5;
+    ActivityItem cost = 6;
+    ActivityItem reward = 7;
+    bool premium = 8;
+    int64 premium_value = 9;
+}
+
+message WeatherResearchGroup {
+    int64 group_id = 1;
+    repeated WeatherResearchNode nodes = 2;
+}
+
+message WeatherResearchTree {
+    repeated WeatherResearchGroup groups = 1;
+}
+
 message QingMeiSettlement {
     int64 settlement_mode = 1;  // 1=直接卖出，2=分享后结算
     int64 total_gold = 2;
@@ -241,6 +296,42 @@ message GiftQixiSachetRequest {
     Params params = 124;
 }
 
+message CollectRainWeatherRequest {
+    message Params { int64 target_gid = 3; }
+    int64 activity_id = 1;
+    int64 operate_type = 2;
+    Params params = 107;
+}
+
+message UnlockRainResearchRequest {
+    message Params { int64 node_id = 1; }
+    int64 activity_id = 1;
+    int64 operate_type = 2;
+    Params params = 140;
+}
+
+message WeatherExchangeResult {
+    corepb.Item received_item = 1;
+    ActivityItem cost = 2;
+}
+
+message WeatherCollectedReward {
+    int64 id = 1;
+    ActivityItem item = 2;
+}
+
+message WeatherCollectionResult {
+    WeatherCollectedReward selected_reward = 1;
+    ActivityItem received_item = 2;
+    ActivityItem consumed_item = 3;
+}
+
+message WeatherResearchResult {
+    int64 node_id = 1;
+    corepb.Item reward = 2;
+    repeated int64 unlocked_node_ids = 3 [packed = true];
+}
+
 message QixiGiftResult {
     int64 total_send_count = 1;
 }
@@ -261,6 +352,9 @@ message ActivityOperateReply {
     QingMeiSettlement qingmei_settlement = 115;
     QixiGiftResult qixi_gift_result = 125;
     QixiBridgeRewardResult qixi_bridge_result = 126;
+    WeatherExchangeResult weather_exchange_result = 101;
+    WeatherCollectionResult weather_collection_result = 108;
+    WeatherResearchResult weather_research_result = 140;
 }
 
 message ActiviesChangeNotify {

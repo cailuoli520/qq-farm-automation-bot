@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package gamepb.weatherpb;
+
+message GetWeatherStatusRequest {}
+
+message WeatherStatus {
+    int64 weather_id = 1;
+    int64 weather_type = 2;
+    int64 begin_time = 3;
+    int64 end_time = 4;
+    bool active = 5;
+    bool field_8 = 8; // 好友农场进入回包中随雷雨状态返回的可交互标记
+}
+
+message GetWeatherStatusReply {
+    WeatherStatus status = 1;
+}

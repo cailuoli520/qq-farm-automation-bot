@@ -71,6 +71,8 @@ test('Worker 默认 API 方法表保持与主进程调用契约一致', () => {
         'getCurrentSolarTerms',
         'getCurrentQingMeiActivity',
         'getCurrentQixiActivity',
+        'getCurrentRainPoetryActivity',
+        'getRainPoetryWeather',
         'claimBattlePassRewards',
         'exchangeStarSandGoods',
         'lightConstellation',
@@ -83,6 +85,10 @@ test('Worker 默认 API 方法表保持与主进程调用契约一致', () => {
         'giftQixiSachet',
         'getQixiDewTargets',
         'useQixiDew',
+        'exchangeRainBottle',
+        'collectRainWeather',
+        'useRainThunderstorm',
+        'unlockRainResearch',
     ]);
 });
 
