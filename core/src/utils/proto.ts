@@ -20,6 +20,7 @@ async function loadProto(): Promise<void> {
         getResourcePath('proto', 'corepb.proto'),
         getResourcePath('proto', 'shoppb.proto'),
         getResourcePath('proto', 'friendpb.proto'),
+        getResourcePath('proto', 'careerpb.proto'),
         getResourcePath('proto', 'visitpb.proto'),
         getResourcePath('proto', 'notifypb.proto'),
         getResourcePath('proto', 'taskpb.proto'),
@@ -151,6 +152,12 @@ async function loadProto(): Promise<void> {
     types.WithdrawDogReply = root.lookupType('gamepb.dogpb.WithdrawDogReply');
     types.AddFoodRequest = root.lookupType('gamepb.dogpb.AddFoodRequest');
     types.AddFoodReply = root.lookupType('gamepb.dogpb.AddFoodReply');
+    types.ClaimSkillGiftsRequest = root.lookupType('gamepb.dogpb.ClaimSkillGiftsRequest');
+    types.ClaimSkillGiftsReply = root.lookupType('gamepb.dogpb.ClaimSkillGiftsReply');
+    types.PendingGiftCountNotify = root.lookupType('gamepb.dogpb.PendingGiftCountNotify');
+    types.GetProtectLogsRequest = root.lookupType('gamepb.dogpb.GetProtectLogsRequest');
+    types.GetProtectLogsReply = root.lookupType('gamepb.dogpb.GetProtectLogsReply');
+    types.NewProtectLogNotify = root.lookupType('gamepb.dogpb.NewProtectLogNotify');
 
     // 好友
     types.GetAllFriendsRequest = root.lookupType('gamepb.friendpb.GetAllRequest');
@@ -159,9 +166,17 @@ async function loadProto(): Promise<void> {
     types.GetApplicationsReply = root.lookupType('gamepb.friendpb.GetApplicationsReply');
     types.AcceptFriendsRequest = root.lookupType('gamepb.friendpb.AcceptFriendsRequest');
     types.AcceptFriendsReply = root.lookupType('gamepb.friendpb.AcceptFriendsReply');
+    types.RejectFriendsRequest = root.lookupType('gamepb.friendpb.RejectFriendsRequest');
+    types.RejectFriendsReply = root.lookupType('gamepb.friendpb.RejectFriendsReply');
+    types.DelFriendRequest = root.lookupType('gamepb.friendpb.DelFriendRequest');
+    types.DelFriendReply = root.lookupType('gamepb.friendpb.DelFriendReply');
     types.SyncAllFriendsRequest = root.lookupType('gamepb.friendpb.SyncAllRequest');
     types.SyncAllFriendsReply = root.lookupType('gamepb.friendpb.SyncAllReply');
     types.GetGameFriendsRequest = root.lookupType('gamepb.friendpb.GetGameFriendsRequest');
+
+    // 生涯
+    types.CareerInfoGetRequest = root.lookupType('gamepb.careerpb.CareerInfoGetRequest');
+    types.CareerInfoGetReply = root.lookupType('gamepb.careerpb.CareerInfoGetReply');
 
     // 访问
     types.VisitEnterRequest = root.lookupType('gamepb.visitpb.EnterRequest');

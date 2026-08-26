@@ -105,8 +105,12 @@ function settleEvents() {
 test('新增多请求 API 使用覆盖完整请求链的主进程超时', () => {
     assert.equal(workerApiTimeout('getIllustratedSnapshot'), 90000);
     assert.equal(workerApiTimeout('getPetInfo'), 90000);
+    assert.equal(workerApiTimeout('getPetProtectLogs'), 90000);
     assert.equal(workerApiTimeout('useDogFood'), 150000);
+    assert.equal(workerApiTimeout('claimDogSkillGifts'), 150000);
     assert.equal(workerApiTimeout('setItemsLocked'), 150000);
+    assert.equal(workerApiTimeout('deleteFriend'), 150000);
+    assert.equal(workerApiTimeout('fertilizeOwnLand'), 150000);
     assert.equal(workerApiTimeout('getBag'), 10000);
 });
 

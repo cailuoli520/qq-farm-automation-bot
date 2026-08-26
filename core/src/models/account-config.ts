@@ -44,7 +44,13 @@ export interface AccountConfig extends UnknownRecord {
     fertilizerBuyNormalThresholdHours: number;
     fertilizerBuyCheckIntervalMinutes: number;
     bagSeedPriority: number[];
+    bagSeedLandTypes: Record<string, string[]>;
     bagSeedFallbackStrategy: string;
+    autoAcceptFriendMinLevel: number;
+    autoAcceptRequireOwnLevel: boolean;
+    autoAcceptHarvestStealEnabled: boolean;
+    autoAcceptHarvestStealHarvest: number;
+    autoAcceptHarvestStealSteal: number;
     autoRelogin: AutoReloginConfig;
 }
 
@@ -68,7 +74,7 @@ const PUSHOO_CHANNELS = new Set([
     'discord', 'wxpusher',
 ]);
 
-export const DEFAULT_FERTILIZER_LAND_TYPES = ['gold', 'black', 'red', 'normal'];
+export const DEFAULT_FERTILIZER_LAND_TYPES = ['purple-gold', 'gold', 'black', 'red', 'normal'];
 const FERTILIZER_LAND_TYPE_SET = new Set(DEFAULT_FERTILIZER_LAND_TYPES);
 const INTERVAL_MAX_SEC = 86400;
 export const DEFAULT_KNOWN_FRIEND_GID_SYNC_COOLDOWN_SEC = 300;
@@ -90,7 +96,9 @@ export const DEFAULT_ACCOUNT_CONFIG: AccountConfig = {
         farm_push: true,
         land_upgrade: false,
         friend: true,
+        friend_auto_accept: true,
         friend_help_exp_limit: true,
+        friend_help_protect_dog_ignore_exp_limit: true,
         friend_steal: true,
         friend_help: true,
         friend_bad: false,
@@ -111,6 +119,7 @@ export const DEFAULT_ACCOUNT_CONFIG: AccountConfig = {
         fertilizer_land_types: [...DEFAULT_FERTILIZER_LAND_TYPES],
         fertilizer_smart_seconds: 300,
         skip_own_weed_bug: true,
+        show_manual_fertilizer: true,
     },
     plantingStrategy: 'max_exp',
     preferredSeedId: 0,
@@ -142,7 +151,13 @@ export const DEFAULT_ACCOUNT_CONFIG: AccountConfig = {
     fertilizerBuyNormalThresholdHours: 10,
     fertilizerBuyCheckIntervalMinutes: 60,
     bagSeedPriority: [],
+    bagSeedLandTypes: {},
     bagSeedFallbackStrategy: 'level',
+    autoAcceptFriendMinLevel: 0,
+    autoAcceptRequireOwnLevel: false,
+    autoAcceptHarvestStealEnabled: true,
+    autoAcceptHarvestStealHarvest: 8,
+    autoAcceptHarvestStealSteal: 1,
     autoRelogin: {
         enabled: false,
         delayMinutes: 15,
@@ -204,6 +219,24 @@ export function normalizeBagSeedPriority(input: unknown): number[] {
         normalized.push(value);
     }
     return normalized;
+}
+
+export function normalizeBagSeedLandTypes(input: unknown): Record<string, string[]> {
+    const source = asRecord(input);
+    const normalized: Record<string, string[]> = {};
+    for (const [rawSeedId, rawTypes] of Object.entries(source)) {
+        const seedId = parseInteger(rawSeedId);
+        if (!Number.isFinite(seedId) || seedId <= 0) continue;
+        const types = normalizeFertilizerLandTypes(rawTypes, []);
+        if (types.length === 0 || types.length === DEFAULT_FERTILIZER_LAND_TYPES.length) continue;
+        normalized[String(seedId)] = types;
+    }
+    return normalized;
+}
+
+function normalizeIntegerRange(input: unknown, fallback: number, min: number, max: number): number {
+    const value = parseInteger(input);
+    return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback;
 }
 
 export function normalizeBagSeedFallbackStrategy(input: unknown, fallback = 'level'): string {
@@ -366,7 +399,32 @@ export function cloneAccountConfig(base: unknown = DEFAULT_ACCOUNT_CONFIG): Acco
         fertilizerBuyNormalThresholdHours: Math.max(0, Math.min(990, Number(source.fertilizerBuyNormalThresholdHours) || 0)),
         fertilizerBuyCheckIntervalMinutes: Math.max(1, Math.min(1440, Number(source.fertilizerBuyCheckIntervalMinutes) || 30)),
         bagSeedPriority: normalizeBagSeedPriority(source.bagSeedPriority),
+        bagSeedLandTypes: normalizeBagSeedLandTypes(source.bagSeedLandTypes),
         bagSeedFallbackStrategy: normalizeBagSeedFallbackStrategy(source.bagSeedFallbackStrategy),
+        autoAcceptFriendMinLevel: normalizeIntegerRange(
+            source.autoAcceptFriendMinLevel,
+            DEFAULT_ACCOUNT_CONFIG.autoAcceptFriendMinLevel,
+            0,
+            200,
+        ),
+        autoAcceptRequireOwnLevel: source.autoAcceptRequireOwnLevel !== undefined
+            ? Boolean(source.autoAcceptRequireOwnLevel)
+            : DEFAULT_ACCOUNT_CONFIG.autoAcceptRequireOwnLevel,
+        autoAcceptHarvestStealEnabled: source.autoAcceptHarvestStealEnabled !== undefined
+            ? Boolean(source.autoAcceptHarvestStealEnabled)
+            : DEFAULT_ACCOUNT_CONFIG.autoAcceptHarvestStealEnabled,
+        autoAcceptHarvestStealHarvest: normalizeIntegerRange(
+            source.autoAcceptHarvestStealHarvest,
+            DEFAULT_ACCOUNT_CONFIG.autoAcceptHarvestStealHarvest,
+            1,
+            9999,
+        ),
+        autoAcceptHarvestStealSteal: normalizeIntegerRange(
+            source.autoAcceptHarvestStealSteal,
+            DEFAULT_ACCOUNT_CONFIG.autoAcceptHarvestStealSteal,
+            1,
+            9999,
+        ),
     };
 }
 
@@ -471,8 +529,41 @@ export function normalizeAccountConfig(input: unknown, fallback: unknown = DEFAU
     if (source.bagSeedPriority !== undefined && source.bagSeedPriority !== null) {
         config.bagSeedPriority = normalizeBagSeedPriority(source.bagSeedPriority);
     }
+    if (source.bagSeedLandTypes !== undefined && source.bagSeedLandTypes !== null) {
+        config.bagSeedLandTypes = normalizeBagSeedLandTypes(source.bagSeedLandTypes);
+    }
     if (source.bagSeedFallbackStrategy !== undefined && source.bagSeedFallbackStrategy !== null) {
         config.bagSeedFallbackStrategy = normalizeBagSeedFallbackStrategy(source.bagSeedFallbackStrategy);
+    }
+    if (source.autoAcceptFriendMinLevel !== undefined && source.autoAcceptFriendMinLevel !== null) {
+        config.autoAcceptFriendMinLevel = normalizeIntegerRange(
+            source.autoAcceptFriendMinLevel,
+            config.autoAcceptFriendMinLevel,
+            0,
+            200,
+        );
+    }
+    if (source.autoAcceptRequireOwnLevel !== undefined && source.autoAcceptRequireOwnLevel !== null) {
+        config.autoAcceptRequireOwnLevel = Boolean(source.autoAcceptRequireOwnLevel);
+    }
+    if (source.autoAcceptHarvestStealEnabled !== undefined && source.autoAcceptHarvestStealEnabled !== null) {
+        config.autoAcceptHarvestStealEnabled = Boolean(source.autoAcceptHarvestStealEnabled);
+    }
+    if (source.autoAcceptHarvestStealHarvest !== undefined && source.autoAcceptHarvestStealHarvest !== null) {
+        config.autoAcceptHarvestStealHarvest = normalizeIntegerRange(
+            source.autoAcceptHarvestStealHarvest,
+            config.autoAcceptHarvestStealHarvest,
+            1,
+            9999,
+        );
+    }
+    if (source.autoAcceptHarvestStealSteal !== undefined && source.autoAcceptHarvestStealSteal !== null) {
+        config.autoAcceptHarvestStealSteal = normalizeIntegerRange(
+            source.autoAcceptHarvestStealSteal,
+            config.autoAcceptHarvestStealSteal,
+            1,
+            9999,
+        );
     }
     return config;
 }

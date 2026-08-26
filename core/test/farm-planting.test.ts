@@ -5,6 +5,7 @@ const { getPlantSizeBySeedId } = require('../src/config/gameConfig');
 const {
     encodePlantRequest,
     getPlantingStrategyLabel,
+    resolveSeedLandTypes,
     sortBagSeedsForPlanting,
 } = require('../src/services/farm-planting');
 
@@ -46,6 +47,19 @@ test('种植策略展示名兼容内置策略和未知策略', () => {
     assert.equal(getPlantingStrategyLabel('bag_priority'), '背包种子优先');
     assert.equal(getPlantingStrategyLabel('max_fert_profit'), '最大普通肥净利润/时');
     assert.equal(getPlantingStrategyLabel('custom_strategy'), 'custom_strategy');
+});
+
+test('背包种子土地限制按种子读取并将空范围或全范围视为不限制', () => {
+    const settings = {
+        20001: ['RED', 'purple-gold', 'red', 'invalid'],
+        20002: [],
+        20003: ['purple-gold', 'gold', 'black', 'red', 'normal'],
+    };
+
+    assert.deepEqual(resolveSeedLandTypes(settings, 20001), ['red', 'purple-gold']);
+    assert.equal(resolveSeedLandTypes(settings, 20002), null);
+    assert.equal(resolveSeedLandTypes(settings, 20003), null);
+    assert.equal(resolveSeedLandTypes(settings, 20004), null);
 });
 
 test('活动多格种子在旧版植物表缺失时仍能识别占地尺寸', () => {

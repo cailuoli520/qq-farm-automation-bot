@@ -2,6 +2,7 @@ import process from 'node:process';
 import type { MasterToWorkerMessage, WorkerToMasterMessage, WxCredentialAction } from '../types/ipc';
 import type { WorkerBattlePassPushRuntime } from '../runtime/worker-battle-pass';
 import type { WorkerMysteryShopRuntime } from '../runtime/worker-mystery-shop';
+import type { WorkerPetGiftRuntime } from '../runtime/worker-pet-gifts';
 import { assertNever } from '../types/ipc';
 import { createWorkerApiHandler, createWorkerApiMethods } from '../runtime/worker-api';
 import { createWorkerAutomationScheduler } from '../runtime/worker-automation-scheduler';
@@ -35,6 +36,7 @@ const { connect, reconnect, cleanup, getWs, getUserState, networkEvents } = requ
 const { setClientVersionPrefix } = require('../config/config');
 const { createWorkerBattlePassPushRuntime } = require('../runtime/worker-battle-pass');
 const { createWorkerMysteryShopRuntime } = require('../runtime/worker-mystery-shop');
+const { createWorkerPetGiftRuntime } = require('../runtime/worker-pet-gifts');
 const { flushWorkerMessage, sendWorkerMessage } = require('../runtime/worker-channel');
 const { loadProto } = require('../utils/proto');
 const { setLogHook, log, toNum } = require('../utils/utils');
@@ -92,6 +94,7 @@ let onSellGain: ((deltaGold: unknown) => void) | null = null;
 let onFarmHarvested: (() => Promise<void>) | null = null;
 let battlePassPushRuntime: WorkerBattlePassPushRuntime | null = null;
 let mysteryShopRuntime: WorkerMysteryShopRuntime | null = null;
+let petGiftRuntime: WorkerPetGiftRuntime | null = null;
 let harvestSellRunning = false;
 let onWsError: ((payload: DynamicRecord) => void) | null = null;
 let wsErrorHandledAt = 0;
@@ -176,6 +179,8 @@ function cleanupWorkerResources(): void {
     battlePassPushRuntime = null;
     try { mysteryShopRuntime?.stop(); } catch {}
     mysteryShopRuntime = null;
+    try { petGiftRuntime?.stop(); } catch {}
+    petGiftRuntime = null;
     try { stopAceRuntime(true); } catch {}
     try { cleanup('worker exit'); } catch {}
     try { workerScheduler.clearAll(); } catch {}
@@ -571,6 +576,17 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
             });
         battlePassPushRuntime = runtime;
         runtime.start();
+
+        const giftRuntime: WorkerPetGiftRuntime = petGiftRuntime
+            || createWorkerPetGiftRuntime({
+                events: networkEvents,
+                service: require('../services/pets'),
+                isLifecycleActive,
+                log,
+            });
+        petGiftRuntime = giftRuntime;
+        giftRuntime.start();
+        giftRuntime.checkNow();
 
         if (onFarmHarvested) {
             networkEvents.off('farmHarvested', onFarmHarvested);

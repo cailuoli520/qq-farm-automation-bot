@@ -113,6 +113,7 @@ const LONG_READ_METHODS = new Set([
     'getQixiDewTargets',
     'getIllustratedSnapshot',
     'getPetInfo',
+    'getPetProtectLogs',
 ]);
 
 const LONG_MUTATION_METHODS = new Set([
@@ -130,7 +131,10 @@ const LONG_MUTATION_METHODS = new Set([
     'deployDog',
     'withdrawDog',
     'useDogFood',
+    'claimDogSkillGifts',
     'setItemsLocked',
+    'deleteFriend',
+    'fertilizeOwnLand',
 ]);
 
 export function workerApiTimeout(method: string): number {

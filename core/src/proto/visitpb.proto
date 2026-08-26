@@ -27,10 +27,14 @@ message EnterRequest {
     bytes field_7 = 7;  // 抓包确认 field 7 bytes（空）
 }
 
+message BriefDogInfo {
+    int64 dog_id = 1;
+}
+
 message EnterReply {
     gamepb.userpb.BasicInfo basic = 1;              // 好友基本信息
     repeated gamepb.plantpb.LandInfo lands = 2;     // 好友的所有土地
-    // field 3: brief_dog_info (不需要)
+    BriefDogInfo brief_dog_info = 3;
     // field 4: nudge_info (不需要)
 }
 

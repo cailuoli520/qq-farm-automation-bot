@@ -4,6 +4,7 @@ const { getAutomation } = require('../models/store');
 const { getAvailableSeeds, getLandsDetail, runFarmOperation } = require('../services/farm');
 const {
     clearFriendsListCache,
+    deleteFriend,
     doFriendOperation,
     getFriendLandsDetail,
     getFriendsList,
@@ -37,11 +38,14 @@ export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<
         getInteractRecords: () => getInteractRecords(),
         getFriendLands: args => getFriendLandsDetail(args[0]),
         doFriendOp: args => doFriendOperation(args[0], args[1]),
+        deleteFriend: args => deleteFriend(args[0]),
         getSeeds: () => getAvailableSeeds(),
         getBag: () => require('../services/warehouse').getBagDetail(),
         getBagSeeds: () => require('../services/warehouse').getBagSeeds(),
         getIllustratedSnapshot: () => require('../services/illustrated').getIllustratedSnapshot(),
         getPetInfo: () => require('../services/pets').getPetInfo(),
+        getPetProtectLogs: () => require('../services/pets').getProtectLogs(),
+        claimDogSkillGifts: args => require('../services/pets').claimDogSkillGifts(args[0]),
         deployDog: args => require('../services/pets').deployDog(args[0]),
         withdrawDog: () => require('../services/pets').withdrawDog(),
         useDogFood: args => require('../services/pets').useDogFood(args[0], args[1]),
@@ -64,6 +68,7 @@ export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<
             return getAutomation();
         },
         doFarmOp: args => runFarmOperation(args[0]),
+        fertilizeOwnLand: args => require('../services/farm').fertilizeOwnLand(args[0], args[1]),
         buyFertilizer: (args) => {
             const fertilizerType = args[0] || 'organic';
             const fertilizerCount = Number(args[1]) || 0;

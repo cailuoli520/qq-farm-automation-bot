@@ -12,6 +12,7 @@ const {
 } = require('../config/gameConfig');
 const {
     getBagSeedPriority,
+    getBagSeedLandTypes,
     getPlantingStrategy,
     getPreferredSeed,
 } = require('../models/store');
@@ -21,8 +22,12 @@ const { log, logWarn, sleep, toLong, toNum } = require('../utils/utils');
 const { getPlantRankings } = require('./analytics');
 const {
     buildLandMap,
+    ALL_FERTILIZER_LAND_TYPES,
+    filterLandIdsByTypes,
     findEmptyLandQuads,
+    formatFertilizerLandTypes,
     getDisplayLandContext,
+    normalizeFertilizerLandTypes,
 } = require('./farm-land-domain');
 const { getBagSeeds } = require('./warehouse');
 
@@ -212,7 +217,18 @@ function sortBagSeedsForPlanting(bagSeeds: DynamicRecord[], priorityList: unknow
     });
 }
 
-async function plantFromBagSeeds(landsToPlant: number[]) {
+function resolveSeedLandTypes(bagSeedLandTypes: unknown, seedId: unknown): string[] | null {
+    const source = bagSeedLandTypes && typeof bagSeedLandTypes === 'object'
+        ? bagSeedLandTypes as Record<string, unknown>
+        : {};
+    const raw = source[String(toNum(seedId))];
+    if (!Array.isArray(raw)) return null;
+    const types = normalizeFertilizerLandTypes(raw);
+    if (types.length === 0 || types.length === ALL_FERTILIZER_LAND_TYPES.length) return null;
+    return types;
+}
+
+async function plantFromBagSeeds(landsToPlant: number[], landTypeById?: Map<number, string>) {
     const targetLandIds = (Array.isArray(landsToPlant) ? landsToPlant : []).map(id => Number(id)).filter(id => id > 0);
     if (targetLandIds.length === 0) {
         return { remainingLandIds: [], fallbackAllowed: false, plantedLandIds: [], totalPlanted: 0, occupiedCount: 0 };
@@ -220,11 +236,20 @@ async function plantFromBagSeeds(landsToPlant: number[]) {
 
     const bagSeeds = await getBagSeeds();
     const allBagSeeds = Array.isArray(bagSeeds) ? bagSeeds : [];
-    const usableSeeds = sortBagSeedsForPlanting(
+    const bagSeedLandTypes = getBagSeedLandTypes();
+    const landTypesAvailable = Boolean(landTypeById && landTypeById.size > 0);
+    const usableSeeds: DynamicRecord[] = sortBagSeedsForPlanting(
         // 1x1 与 2x2 种子都进候选（2x2 由 is2x2 分支选主格种植）
         allBagSeeds.filter(seed => Number(seed && seed.count) > 0 && Number(seed && seed.plantSize) >= 1),
         getBagSeedPriority(),
-    );
+    ).map((seed: DynamicRecord): DynamicRecord => ({
+        ...seed,
+        landTypes: landTypesAvailable ? resolveSeedLandTypes(bagSeedLandTypes, seed.seedId) : null,
+    }));
+    const plantingOrder: DynamicRecord[] = [
+        ...usableSeeds.filter(seed => Array.isArray(seed.landTypes)),
+        ...usableSeeds.filter(seed => !Array.isArray(seed.landTypes)),
+    ];
 
     if (usableSeeds.length === 0) {
         const hasAnyBagSeed = allBagSeeds.some(seed => Number(seed && seed.count) > 0);
@@ -246,8 +271,18 @@ async function plantFromBagSeeds(landsToPlant: number[]) {
     const plantedLandIds = [];
     const usedSeedLogs = [];
 
-    for (const seed of usableSeeds) {
+    for (const seed of plantingOrder) {
         if (remainingLandIds.length === 0) break;
+
+        const allowedLandIds = seed.landTypes
+            ? filterLandIdsByTypes(remainingLandIds, landTypeById, seed.landTypes)
+            : remainingLandIds;
+        if (allowedLandIds.length === 0) {
+            log('种植', `种子 ${seed.name} 仅允许${formatFertilizerLandTypes(seed.landTypes).join('/')}，当前没有匹配空地`, {
+                module: 'farm', event: '种植种子', result: 'land_type_skip', seedId: seed.seedId,
+            });
+            continue;
+        }
 
         // 失败学习：此前整轮种植失败（如 2x2 作物种到 1x1 地块）的种子，改为按 2x2 主格重试或跳过
         const learned = unplantableSeeds.get(seed.seedId);
@@ -261,15 +296,15 @@ async function plantFromBagSeeds(landsToPlant: number[]) {
         }
         if (learned && !is2x2) unplantableSeeds.delete(seed.seedId); // TTL 过期，允许重试
 
-        const maxPlantCount = Math.min(Number(seed.count || 0), remainingLandIds.length);
+        const maxPlantCount = Math.min(Number(seed.count || 0), allowedLandIds.length);
         if (maxPlantCount <= 0) continue;
 
         // 2x2 作物：从当前空地选择数量最多且互不重叠的相邻四格，并将左下格作为主格。
-        const targetLands = remainingLandIds;
+        const targetLands = allowedLandIds;
         let quadGroups = null;
         let plannedPlantCount = maxPlantCount;
         if (is2x2) {
-            quadGroups = findEmptyLandQuads(remainingLandIds);
+            quadGroups = findEmptyLandQuads(allowedLandIds);
             if (quadGroups.length === 0) {
                 log('种植', `种子 ${seed.name} 为 ${plantSize}x${plantSize} 作物，当前空地无法组成 2x2，本轮跳过`, {
                     module: 'farm', event: '种植种子', result: 'no_2x2_quads', seedId: seed.seedId,
@@ -288,7 +323,8 @@ async function plantFromBagSeeds(landsToPlant: number[]) {
             totalPlanted += result.planted;
             occupiedCount += currentOccupied.length > 0 ? currentOccupied.length : result.planted;
             plantedLandIds.push(...currentPlantedLandIds);
-            remainingLandIds = remainingLandIds.filter(id => !currentOccupied.includes(id));
+            const consumed = new Set([...currentOccupied, ...currentPlantedLandIds]);
+            remainingLandIds = remainingLandIds.filter(id => !consumed.has(id));
             usedSeedLogs.push(`${seed.name}x${result.planted}`);
         }
 
@@ -649,5 +685,6 @@ export {
     plantFromBagSeeds,
     plantFromShop,
     plantSeeds,
+    resolveSeedLandTypes,
     sortBagSeedsForPlanting,
 };

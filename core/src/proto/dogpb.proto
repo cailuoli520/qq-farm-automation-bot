@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package gamepb.dogpb;
 
+import "corepb.proto";
+
 message DogInfo {
     int64 id = 1;
     string name = 2;
@@ -44,3 +46,52 @@ message WithdrawDogRequest {}
 message WithdrawDogReply { int64 dog_id = 1; }
 message AddFoodRequest { int64 item_id = 1; int64 count = 2; }
 message AddFoodReply { int64 protect_time = 1; }
+
+// 主人侧一次领取全部待拾取的“同气连枝礼包”。
+message ClaimSkillGiftsRequest {}
+message ClaimSkillGiftsReply {
+    corepb.Item item = 1;
+    int64 claimed_count = 3;
+}
+
+// 服务端推送主人侧待拾取礼包数量。
+message PendingGiftCountNotify { int64 count = 1; }
+
+// 宠物守护记录的真实请求固定为 0/100/0；字段 1、3 语义尚未确认。
+message GetProtectLogsRequest {
+    int64 field_1 = 1;
+    int64 count = 2;
+    int64 field_3 = 3;
+}
+
+message ProtectLogDisplayItem {
+    int64 item_id = 1;
+    int64 count = 2;
+    int64 field_4 = 4;
+}
+
+message ProtectLogExtra { bytes value = 1; }
+
+message ProtectLogEntry {
+    int64 friend_gid = 1;
+    string friend_name = 2;
+    string friend_avatar = 3;
+    int64 timestamp = 5;
+    int64 stolen_count = 6;
+    int64 protected_gold = 7;
+    int64 dog_id = 8;
+    string dog_name = 9;
+    int64 friend_role_id = 10;
+    int64 field_12 = 12;
+    int64 field_13 = 13;
+    repeated ProtectLogDisplayItem display_items = 14;
+    ProtectLogExtra extra = 20;
+}
+
+message GetProtectLogsReply {
+    repeated ProtectLogEntry logs = 1;
+    int64 total = 2;
+}
+
+// 空事件，仅表示守护记录已变化。
+message NewProtectLogNotify {}

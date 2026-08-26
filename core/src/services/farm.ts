@@ -5,13 +5,14 @@
 import type { LandType } from './farm-land-domain';
 const { CONFIG, PlantPhase, PHASE_NAMES } = require('../config/config');
 const { getPlantName, getPlantGrowTime, getPlantById, getSeedImageBySeedId, deriveSeedIdFromPlantId } = require('../config/gameConfig');
-const { isAutomationOn, getAutomation, getPlantingStrategy, getBagSeedFallbackStrategy, getFertilizerBuyOrganicCount, getFertilizerBuyOrganicThresholdHours, getFertilizerBuyNormalCount, getFertilizerBuyNormalThresholdHours, getFertilizerBuyCheckIntervalMinutes } = require('../models/store');
+const { isAutomationOn, getAutomation, getPlantingStrategy, getBagSeedLandTypes, getBagSeedFallbackStrategy, getFertilizerBuyOrganicCount, getFertilizerBuyOrganicThresholdHours, getFertilizerBuyNormalCount, getFertilizerBuyNormalThresholdHours, getFertilizerBuyCheckIntervalMinutes } = require('../models/store');
 const { sendMsgAsync, getUserState, networkEvents } = require('../utils/network');
 const { types } = require('../utils/proto');
 const { toLong, toNum, getServerTimeSec, toTimeSec, log, logWarn, sleep, randomDelay } = require('../utils/utils');
 const { createScheduler } = require('./scheduler');
 const { recordOperation } = require('./stats');
 const { checkAndBuyFertilizerBoth } = require('./mall');
+const { getCareerInfoOrNull } = require('./career');
 const {
     getAvailableSeeds,
     getPlantingStrategyLabel,
@@ -165,6 +166,33 @@ async function fertilize(landIds: unknown[], fertilizerId = NORMAL_FERTILIZER_ID
         if (landIds.length > 1) await sleep(50);  // 50ms 间隔
     }
     return successCount;
+}
+
+async function fertilizeOwnLand(landIdInput: unknown, fertilizerTypeInput: unknown): Promise<DynamicRecord> {
+    const landId = toNum(landIdInput);
+    if (landId <= 0) throw new Error('地块编号无效');
+    const fertilizerType = String(fertilizerTypeInput || '').trim().toLowerCase();
+    if (fertilizerType !== 'normal' && fertilizerType !== 'organic') {
+        throw new Error('化肥类型必须是 normal 或 organic');
+    }
+    const fertilizerId = fertilizerType === 'organic' ? ORGANIC_FERTILIZER_ID : NORMAL_FERTILIZER_ID;
+    const body = types.FertilizeRequest.encode(types.FertilizeRequest.create({
+        land_ids: [toLong(landId)],
+        fertilizer_id: toLong(fertilizerId),
+    })).finish();
+    const { body: replyBody } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Fertilize', body);
+    const reply = types.FertilizeReply.decode(replyBody);
+    if (reply.operation_limits && onOperationLimitsUpdate) {
+        onOperationLimitsUpdate(reply.operation_limits);
+    }
+    recordOperation('fertilize', 1);
+    const latest = await getLandsDetail();
+    const updatedLand = (latest.lands || []).find((land: DynamicRecord) => toNum(land.id) === landId) || null;
+    const typeName = fertilizerType === 'organic' ? '有机化肥' : '普通化肥';
+    log('施肥', `手动施肥：第 ${landId} 块地已施${typeName}`, {
+        module: 'farm', event: '手动施肥', result: 'ok', type: fertilizerType, landId,
+    });
+    return { landId, fertilizerType, updatedLand };
 }
 
 /**
@@ -508,6 +536,9 @@ async function getLandsDetail() {
                 needWeed,
                 needBug,
                 interactionEffects,
+                leftInorcFertTimes: Object.hasOwn(plant, 'left_inorc_fert_times')
+                    ? toNum(plant.left_inorc_fert_times)
+                    : null,
                 stealable: !!plant.stealable,
                 level,
                 maxLevel,
@@ -524,15 +555,15 @@ async function getLandsDetail() {
 
         return {
             lands,
-
             summary: summarizeLandDetails(lands),
+            career: await getCareerInfoOrNull(getUserState().gid),
         };
     } catch {
         return { lands: [], summary: {} };
     }
 }
 
-async function autoPlantEmptyLands(deadLandIds: number[], emptyLandIds: number[]): Promise<void | DynamicRecord> {
+async function autoPlantEmptyLands(deadLandIds: number[], emptyLandIds: number[], knownLands: DynamicRecord[] = []): Promise<void | DynamicRecord> {
     const landsToPlant: number[] = [...emptyLandIds];
     const state = getUserState();
 
@@ -561,7 +592,19 @@ async function autoPlantEmptyLands(deadLandIds: number[], emptyLandIds: number[]
     if (accountStrategy === 'bag_priority') {
         let bagResult;
         try {
-            bagResult = await plantFromBagSeeds(landsToPlant);
+            let landTypeById: Map<number, LandType> | undefined;
+            if (Object.keys(getBagSeedLandTypes()).length > 0) {
+                landTypeById = new Map<number, LandType>();
+                for (const land of knownLands) {
+                    const landId = toNum(land && land.id);
+                    if (landId > 0) landTypeById.set(landId, getLandTypeByLevel(land.level));
+                }
+                if (landTypeById.size === 0) {
+                    logWarn('种植', '无法确认土地类型，本轮忽略背包种子的土地限制');
+                    landTypeById = undefined;
+                }
+            }
+            bagResult = await plantFromBagSeeds(landsToPlant, landTypeById);
         } catch (e) {
             logWarn('种植', `读取背包种子失败，本轮跳过第二优先策略以避免误购: ${errorMessage(e)}`, {
                 module: 'farm',
@@ -825,7 +868,7 @@ async function runFarmOperation(opType: string) {
         if (allDeadLands.length > 0 || allEmptyLands.length > 0) {
             try {
                 const plantCount = allDeadLands.length + allEmptyLands.length;
-                await autoPlantEmptyLands(allDeadLands, allEmptyLands);
+                await autoPlantEmptyLands(allDeadLands, allEmptyLands, lands);
                 actions.push(`种植${plantCount}`);
                 recordOperation('plant', plantCount);
             } catch (e) { logWarn('种植', errorMessage(e)); }
@@ -1050,6 +1093,7 @@ export {
     buildSlaveToMasterMap,
     checkFarm,
     encodeOwnFarmingRequest,
+    fertilizeOwnLand,
     getAllLands,
     getAvailableSeeds,
     getCurrentPhase,

@@ -246,6 +246,28 @@ function registerGameplayRoutes(options: GameplayRouteOptions): void {
         }
     });
 
+    app.get('/api/pets/protect-logs', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        try {
+            res.json({ ok: true, data: await provider.getPetProtectLogs(id) });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
+    app.post('/api/pets/gifts/claim', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        try {
+            res.json({ ok: true, data: await provider.claimDogSkillGifts(id) });
+        } catch (e) {
+            handleApiError(res, e);
+        }
+    });
+
     app.post('/api/pets/deploy', async (req, res) => {
         const id = getAccId(req);
         if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
@@ -453,6 +475,21 @@ function registerGameplayRoutes(options: GameplayRouteOptions): void {
             res.json({ ok: true });
         } catch (e) {
             res.status(500).json({ ok: false, error: errorMessage(e) });
+        }
+    });
+
+    // API: 指定地块手动施肥
+    app.post('/api/farm/fertilize', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+        try {
+            const data = await provider.fertilizeOwnLand(id, req.body?.landId, req.body?.fertilizerType);
+            res.json({ ok: true, data });
+        } catch (error) {
+            handleApiError(res, error);
         }
     });
 

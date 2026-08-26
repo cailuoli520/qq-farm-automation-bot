@@ -110,6 +110,30 @@ function registerFriendRoutes(options: FriendRouteOptions): void {
         }
     });
 
+    // API: 删除游戏好友
+    app.delete('/api/friend/:gid', async (req, res) => {
+        const id = getAccId(req);
+        if (!id) return res.status(400).json({ ok: false, error: 'Missing x-account-id' });
+        if (!checkAccountAccess(req, id)) {
+            return res.status(403).json({ ok: false, error: '无权访问此账号' });
+        }
+        try {
+            const gid = Number(req.params.gid);
+            if (!Number.isFinite(gid) || gid <= 0) {
+                return res.status(400).json({ ok: false, error: 'GID 无效' });
+            }
+            await provider.deleteFriend(id, gid);
+            const current = store.getKnownFriendGids ? store.getKnownFriendGids(id) : [];
+            if (store.setKnownFriendGids && Array.isArray(current)) {
+                store.setKnownFriendGids(id, current.filter((item: unknown) => Number(item) !== gid));
+            }
+            if (provider.broadcastConfig) provider.broadcastConfig(id);
+            res.json({ ok: true });
+        } catch (error) {
+            handleApiError(res, error);
+        }
+    });
+
     // API: 好友黑名单
     app.get('/api/friend-blacklist', async (req, res) => {
         const id = getAccId(req);
@@ -532,4 +556,3 @@ function registerFriendRoutes(options: FriendRouteOptions): void {
 }
 
 export { registerFriendRoutes };
-

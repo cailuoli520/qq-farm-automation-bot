@@ -3,9 +3,9 @@ const { getItemById, getPlantExp, getPlantName } = require('../config/gameConfig
 const { getServerTimeSec, toNum, toTimeSec } = require('../utils/utils');
 
 type DynamicRecord = Record<string, any>;
-export type LandType = 'gold' | 'black' | 'red' | 'normal';
+export type LandType = 'purple-gold' | 'gold' | 'black' | 'red' | 'normal';
 
-export const ALL_FERTILIZER_LAND_TYPES: LandType[] = ['gold', 'black', 'red', 'normal'];
+export const ALL_FERTILIZER_LAND_TYPES: LandType[] = ['purple-gold', 'gold', 'black', 'red', 'normal'];
 
 // 抓包确认：这两类当前互动状态可由农场主通过 Farming 一键清理。
 const OWNER_CLEANABLE_INTERACTION_ITEM_IDS = new Set(['301101', '301102']);
@@ -89,6 +89,7 @@ export function hasOwnerCleanableInteraction(plant: DynamicRecord | null | undef
     return getPlantInteractionEffects(plant).some(effect => effect.cleanable);
 }
 const FERTILIZER_LAND_TYPE_LABELS: Record<LandType, string> = {
+    'purple-gold': '紫金土地',
     gold: '金土地',
     black: '黑土地',
     red: '红土地',
@@ -271,6 +272,7 @@ export function summarizeLandDetails(lands: DynamicRecord[]) {
 
 export function getLandTypeByLevel(level: unknown): LandType {
     const value = toNum(level);
+    if (value >= 5) return 'purple-gold';
     if (value >= 4) return 'gold';
     if (value === 3) return 'black';
     if (value === 2) return 'red';

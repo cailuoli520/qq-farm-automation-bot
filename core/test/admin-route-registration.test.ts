@@ -26,6 +26,21 @@ const accessAllowed = () => true;
 const getAccountId = () => 'account-1';
 const handleApiError = () => undefined;
 
+function createResponseRecorder() {
+    return {
+        payload: null,
+        statusCode: 200,
+        status(code) {
+            this.statusCode = code;
+            return this;
+        },
+        json(payload) {
+            this.payload = payload;
+            return this;
+        },
+    };
+}
+
 test('农场与好友路由按原有顺序完整注册', () => {
     const { app, routes } = createAppRecorder();
 
@@ -55,6 +70,7 @@ test('农场与好友路由按原有顺序完整注册', () => {
         'GET /api/interact-records',
         'GET /api/friend/:gid/lands',
         'POST /api/friend/:gid/op',
+        'DELETE /api/friend/:gid',
         'GET /api/friend-blacklist',
         'POST /api/friend-blacklist/toggle',
         'GET /api/friend-known-gids',
@@ -71,6 +87,8 @@ test('农场与好友路由按原有顺序完整注册', () => {
         'GET /api/bag',
         'GET /api/illustrated',
         'GET /api/pets',
+        'GET /api/pets/protect-logs',
+        'POST /api/pets/gifts/claim',
         'POST /api/pets/deploy',
         'POST /api/pets/withdraw',
         'POST /api/pets/food/use',
@@ -81,9 +99,78 @@ test('农场与好友路由按原有顺序完整注册', () => {
         'GET /api/daily-gifts',
         'POST /api/accounts/:id/start',
         'POST /api/accounts/:id/stop',
+        'POST /api/farm/fertilize',
         'POST /api/farm/operate',
         'GET /api/analytics',
     ]);
+});
+
+test('删除好友成功后同步移除本地已知 GID，避免后续巡查重新注入', async () => {
+    const { app, handlers } = createAppRecorder();
+    const events = [];
+    registerGameplayRoutes({
+        addOrUpdateAccount: value => value,
+        adminLogger: { info() {}, warn() {} },
+        app,
+        authRequired: middleware,
+        checkAccountAccess: accessAllowed,
+        getAccountId,
+        handleApiError,
+        provider: {
+            deleteFriend: async (accountId, gid) => events.push(['delete', accountId, gid]),
+            broadcastConfig: accountId => events.push(['broadcast', accountId]),
+        },
+        resolveAccountId: value => String(value || ''),
+        store: {
+            getKnownFriendGids: () => [123, 456],
+            setKnownFriendGids: (accountId, gids) => events.push(['known', accountId, gids]),
+        },
+        wxLoginAdapter: {},
+    });
+
+    const response = createResponseRecorder();
+    await handlers.get('DELETE /api/friend/:gid')({ params: { gid: '123' } }, response);
+
+    assert.deepEqual(events, [
+        ['delete', 'account-1', 123],
+        ['known', 'account-1', [456]],
+        ['broadcast', 'account-1'],
+    ]);
+    assert.deepEqual(response.payload, { ok: true });
+});
+
+test('手动施肥路由校验账号并透传地块与肥料类型', async () => {
+    const { app, handlers } = createAppRecorder();
+    const calls = [];
+    registerGameplayRoutes({
+        addOrUpdateAccount: value => value,
+        adminLogger: { info() {}, warn() {} },
+        app,
+        authRequired: middleware,
+        checkAccountAccess: accessAllowed,
+        getAccountId,
+        handleApiError,
+        provider: {
+            fertilizeOwnLand: async (...args) => {
+                calls.push(args);
+                return { landId: 7, fertilizerType: 'organic' };
+            },
+        },
+        resolveAccountId: value => String(value || ''),
+        store: {},
+        wxLoginAdapter: {},
+    });
+
+    const response = createResponseRecorder();
+    await handlers.get('POST /api/farm/fertilize')({
+        body: { landId: 7, fertilizerType: 'organic' },
+    }, response);
+
+    assert.deepEqual(calls, [['account-1', 7, 'organic']]);
+    assert.deepEqual(response.payload, {
+        ok: true,
+        data: { landId: 7, fertilizerType: 'organic' },
+    });
 });
 
 test('数据分析路由可从编译目录加载分析服务', async () => {

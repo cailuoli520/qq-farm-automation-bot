@@ -14,7 +14,25 @@ const DOG_FOOD_DURATIONS = new Map([
     [90006, 5 * 24 * 60 * 60],
 ]);
 const RARITY_LABELS: Record<number, string> = { 1: '普通', 2: '稀有', 3: '珍品', 4: '天工' };
+const PET_OBTAIN_CONDITIONS: Record<number, string> = {
+    90001: '参与分享任务可获得',
+    90002: '商店购买：100 点券',
+    90003: '商店购买：200 点券',
+    90011: '商店购买：200 点券',
+    90021: '限时活动获得',
+};
+const PET_SKILLS: Record<number, Array<Record<string, unknown>>> = {
+    90001: [{ name: '忠心护主', description: '作物被偷时，有 10% 概率触发看护，成功后扣除偷窃者一定金币。', triggerRate: 10, source: 'game-config' }],
+    90002: [{ name: '忠心护主', description: '作物被偷时，有 30% 概率触发看护，成功后扣除偷窃者一定金币。', triggerRate: 30, source: 'game-config' }],
+    90003: [{ name: '忠心护主', description: '作物被偷时，有 50% 概率触发看护，成功后扣除偷窃者一定金币。', triggerRate: 50, source: 'game-config' }],
+    90011: [{ name: '忠心护主', description: '作物被偷时，有 50% 概率触发看护，成功后扣除偷窃者一定金币。', triggerRate: 50, source: 'game-config' }],
+    90021: [
+        { name: '忠心护主', description: '作物被偷时，有 50% 概率触发看护，成功后扣除偷窃者一定金币。', triggerRate: 50, source: 'game-config' },
+        { skillId: 2001, name: '同气连枝', description: '好友协助浇水、除草或除虫时有概率掉落双方均可获得的礼包，每日最多 30 次。', dailyLimit: 30, source: 'client-static' },
+    ],
+};
 let pendingFoodUse: Promise<any> | null = null;
+let pendingGiftClaim: Promise<any> | null = null;
 
 function normalizeId(value: unknown): number {
     return Math.max(0, toNum(value));
@@ -33,6 +51,44 @@ function isLocked(item: any): boolean {
     return item?.locked === true || item?.locked === 1 || item?.locked === '1';
 }
 
+function getPendingGiftCount(reply: any): number {
+    return normalizeId(reply?.pending_gift_count ?? reply?.pendingGiftCount);
+}
+
+function getClaimedGiftCount(reply: any): number {
+    const claimedCount = normalizeId(reply?.claimed_count ?? reply?.claimedCount);
+    return claimedCount || normalizeId(reply?.item?.count);
+}
+
+function didPendingGiftCountDecrease(before: unknown, after: unknown): boolean {
+    return normalizeId(after) < normalizeId(before);
+}
+
+function getPetSkills(id: number, item: any, skillUsages: any[]): Array<Record<string, unknown>> {
+    const definitions = PET_SKILLS[id] || [{
+        name: '看护',
+        description: String(item?.desc || item?.effectDesc || '暂无技能说明'),
+        source: 'game-config',
+    }];
+    return definitions.map((definition) => {
+        const skillId = normalizeId(definition.skillId);
+        if (!skillId) return { ...definition };
+        const usage = skillUsages.find((entry: any) => (
+            normalizeId(entry?.skill_id ?? entry?.skillId) === skillId
+            && normalizeId(entry?.dog_id ?? entry?.dogId) === id
+        ));
+        if (!usage) return { ...definition };
+        const usedCount = normalizeId(usage?.used_count ?? usage?.usedCount);
+        const dailyLimit = normalizeId(usage?.daily_limit ?? usage?.dailyLimit) || normalizeId(definition.dailyLimit);
+        return {
+            ...definition,
+            dailyLimit,
+            usedCount,
+            remainingCount: Math.max(0, dailyLimit - usedCount),
+        };
+    });
+}
+
 async function getDogInfo(): Promise<any> {
     const body = types.GetDogInfoRequest.encode(types.GetDogInfoRequest.create({})).finish();
     const reply = await sendMsgAsync('gamepb.dogpb.DogService', 'GetDogInfo', body);
@@ -42,12 +98,14 @@ async function getDogInfo(): Promise<any> {
 function buildPetSnapshot(reply: any, bagReply: any): any {
     const currentDogId = normalizeId(reply?.current_dog_id);
     const rawDogs = Array.isArray(reply?.dogs) ? reply.dogs : [];
+    const skillUsages = Array.isArray(reply?.skill_usages) ? reply.skill_usages : [];
     const byId = new Map(rawDogs.map((dog: any) => [normalizeId(dog?.id), dog]));
     const ids = [...new Set([...PET_IDS, ...rawDogs.map((dog: any) => normalizeId(dog?.id)).filter(Boolean)])];
     const dogs = ids.map((id) => {
         const raw: any = byId.get(id) || {};
         const item: any = getItemById(id) || {};
         const rarity = normalizeId(item?.rarity);
+        const skills = getPetSkills(id, item, skillUsages);
         return {
             id,
             name: String(raw?.name || item?.name || `宠物#${id}`),
@@ -55,9 +113,13 @@ function buildPetSnapshot(reply: any, bagReply: any): any {
             rarity,
             rarityLabel: RARITY_LABELS[rarity] || '未知',
             level: normalizeId(raw?.level),
+            status: normalizeId(raw?.status),
             price: normalizeId(raw?.price),
             owned: normalizeId(raw?.owned) === 1 || id === currentDogId,
             active: id === currentDogId,
+            obtainCondition: PET_OBTAIN_CONDITIONS[id] || '游戏内活动或购买获得',
+            skills,
+            skillDescription: String(skills[0]?.description || '暂无技能说明'),
         };
     });
     const bagItems = getBagItems(bagReply);
@@ -75,8 +137,96 @@ function buildPetSnapshot(reply: any, bagReply: any): any {
         activeDogId: currentDogId,
         protectDuration,
         maxProtectDuration: Math.max(protectDuration, normalizeId(reply?.max_protect_time) || MAX_PROTECT_DURATION_SECONDS),
-        pendingGiftCount: normalizeId(reply?.pending_gift_count),
+        remainingDuration: protectDuration,
+        pendingGiftCount: getPendingGiftCount(reply),
+        activeControlSupported: true,
+        guardianRecordsSupported: true,
     };
+}
+
+function decodeText(value: unknown): string {
+    if (!value) return '';
+    if (typeof value === 'string') return value;
+    if (Buffer.isBuffer(value) || value instanceof Uint8Array) return Buffer.from(value).toString('utf8');
+    return String(value);
+}
+
+async function getProtectLogs(): Promise<any> {
+    const body = types.GetProtectLogsRequest.encode(types.GetProtectLogsRequest.create({
+        field_1: 0,
+        count: 100,
+        field_3: 0,
+    })).finish();
+    const { body: replyBody } = await sendMsgAsync('gamepb.dogpb.DogService', 'GetProtectLogs', body);
+    const reply = types.GetProtectLogsReply.decode(replyBody);
+    const logs = (Array.isArray(reply?.logs) ? reply.logs : []).map((entry: any, index: number) => {
+        const friendGid = normalizeId(entry?.friend_gid ?? entry?.friendGid);
+        const timestamp = normalizeId(entry?.timestamp);
+        return {
+            id: `${friendGid}-${timestamp}-${index}`,
+            friendGid,
+            friendName: decodeText(entry?.friend_name ?? entry?.friendName) || `用户#${friendGid}`,
+            friendAvatar: String(entry?.friend_avatar ?? entry?.friendAvatar ?? ''),
+            timestamp,
+            stolenCount: normalizeId(entry?.stolen_count ?? entry?.stolenCount),
+            protectedGold: normalizeId(entry?.protected_gold ?? entry?.protectedGold),
+            dogId: normalizeId(entry?.dog_id ?? entry?.dogId),
+            dogName: String(entry?.dog_name ?? entry?.dogName ?? ''),
+        };
+    });
+    return { logs, total: Math.max(logs.length, normalizeId(reply?.total)), offset: 0, limit: 100 };
+}
+
+async function claimDogSkillGifts(_pendingCountHint?: unknown): Promise<any> {
+    if (pendingGiftClaim) return pendingGiftClaim;
+    const request = (async () => {
+        const before = await getDogInfo();
+        // 领取前已向服务器刷新状态，必须以服务器值为准；页面提示可能已过期，
+        // 不能据此发送重复领取请求。
+        const beforeCount = getPendingGiftCount(before);
+        if (beforeCount <= 0) return { claimed: 0, pending: 0, item: null };
+
+        const body = types.ClaimSkillGiftsRequest.encode(types.ClaimSkillGiftsRequest.create({})).finish();
+        let decoded: any = null;
+        try {
+            const { body: replyBody } = await sendMsgAsync('gamepb.dogpb.DogService', 'ClaimSkillGifts', body);
+            decoded = types.ClaimSkillGiftsReply.decode(replyBody);
+        } catch (error) {
+            let confirmed: any = null;
+            try {
+                confirmed = await getDogInfo();
+            } catch { }
+            const confirmedCount = confirmed ? getPendingGiftCount(confirmed) : beforeCount;
+            if (!confirmed || !didPendingGiftCountDecrease(beforeCount, confirmedCount)) throw error;
+            const claimed = beforeCount - confirmedCount;
+            logWarn('宠物', '礼包领取回包失败，但复查确认待领取数量已减少，按成功处理', {
+                module: 'dog', event: '领取同气连枝礼包复查', result: 'reconciled', claimed,
+            });
+            return { claimed, pending: confirmedCount, item: null };
+        }
+
+        let after: any = null;
+        try {
+            after = await getDogInfo();
+        } catch { }
+        const replyClaimedCount = getClaimedGiftCount(decoded);
+        const afterCount = after ? getPendingGiftCount(after) : Math.max(0, beforeCount - replyClaimedCount);
+        const claimed = Math.max(replyClaimedCount, Math.max(0, beforeCount - afterCount));
+        if (claimed <= 0) throw new Error('礼包待领取数量未减少，请稍后重试');
+        const item = decoded?.item || null;
+        const itemId = normalizeId(item?.id);
+        const itemName = String(getItemById(itemId)?.name || (itemId ? `物品#${itemId}` : '同气连枝礼包'));
+        log('宠物', `已领取${itemName} x${claimed}`, {
+            module: 'dog', event: '领取同气连枝礼包', result: 'ok', itemId, claimed,
+        });
+        return { claimed, pending: afterCount, item };
+    })();
+    pendingGiftClaim = request;
+    try {
+        return await request;
+    } finally {
+        if (pendingGiftClaim === request) pendingGiftClaim = null;
+    }
 }
 
 async function getPetInfo(): Promise<any> {
@@ -190,9 +340,14 @@ async function useDogFood(itemIdInput: unknown, countInput: unknown = 1): Promis
 module.exports = {
     MAX_PROTECT_DURATION_SECONDS,
     buildPetSnapshot,
+    claimDogSkillGifts,
     deployDog,
+    didPendingGiftCountDecrease,
     didProtectDurationIncrease,
+    getClaimedGiftCount,
+    getPendingGiftCount,
     getPetInfo,
+    getProtectLogs,
     useDogFood,
     withdrawDog,
 };

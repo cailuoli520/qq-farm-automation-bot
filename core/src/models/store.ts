@@ -11,6 +11,7 @@ import {
     DEFAULT_OFFLINE_REMINDER,
     normalizeAccountConfig,
     normalizeBagSeedFallbackStrategy,
+    normalizeBagSeedLandTypes,
     normalizeFertilizerLandTypes,
     normalizeFriendsListCacheTtlSec,
     normalizeKnownFriendGids,
@@ -346,6 +347,14 @@ function getConfigSnapshot(accountId: unknown): UnknownRecord {
         fertilizerBuyNormalCount: Math.max(0, Math.min(10000, Number(cfg.fertilizerBuyNormalCount) || 0)),
         fertilizerBuyNormalThresholdHours: Math.max(0, Math.min(990, Number(cfg.fertilizerBuyNormalThresholdHours) || 0)),
         fertilizerBuyCheckIntervalMinutes: Math.max(1, Math.min(1440, Number(cfg.fertilizerBuyCheckIntervalMinutes) || 30)),
+        bagSeedPriority: [...(cfg.bagSeedPriority || [])],
+        bagSeedLandTypes: normalizeBagSeedLandTypes(cfg.bagSeedLandTypes),
+        bagSeedFallbackStrategy: normalizeBagSeedFallbackStrategy(cfg.bagSeedFallbackStrategy),
+        autoAcceptFriendMinLevel: cfg.autoAcceptFriendMinLevel,
+        autoAcceptRequireOwnLevel: cfg.autoAcceptRequireOwnLevel,
+        autoAcceptHarvestStealEnabled: cfg.autoAcceptHarvestStealEnabled,
+        autoAcceptHarvestStealHarvest: cfg.autoAcceptHarvestStealHarvest,
+        autoAcceptHarvestStealSteal: cfg.autoAcceptHarvestStealSteal,
         ui: { ...globalConfig.ui },
     };
 }
@@ -399,8 +408,32 @@ function getBagSeedPriority(accountId?: unknown): number[] {
     return [...(getAccountConfigSnapshot(accountId).bagSeedPriority || [])];
 }
 
+function getBagSeedLandTypes(accountId?: unknown): Record<string, string[]> {
+    return normalizeBagSeedLandTypes(getAccountConfigSnapshot(accountId).bagSeedLandTypes);
+}
+
 function getBagSeedFallbackStrategy(accountId?: unknown): string {
     return normalizeBagSeedFallbackStrategy(getAccountConfigSnapshot(accountId).bagSeedFallbackStrategy);
+}
+
+function getAutoAcceptFriendMinLevel(accountId?: unknown): number {
+    return getAccountConfigSnapshot(accountId).autoAcceptFriendMinLevel;
+}
+
+function getAutoAcceptRequireOwnLevel(accountId?: unknown): boolean {
+    return getAccountConfigSnapshot(accountId).autoAcceptRequireOwnLevel;
+}
+
+function getAutoAcceptHarvestStealEnabled(accountId?: unknown): boolean {
+    return getAccountConfigSnapshot(accountId).autoAcceptHarvestStealEnabled;
+}
+
+function getAutoAcceptHarvestStealHarvest(accountId?: unknown): number {
+    return getAccountConfigSnapshot(accountId).autoAcceptHarvestStealHarvest;
+}
+
+function getAutoAcceptHarvestStealSteal(accountId?: unknown): number {
+    return getAccountConfigSnapshot(accountId).autoAcceptHarvestStealSteal;
 }
 
 function getIntervals(accountId?: unknown): Record<string, number> {
@@ -797,7 +830,13 @@ module.exports = {
     getPreferredSeed,
     getPlantingStrategy,
     getBagSeedPriority,
+    getBagSeedLandTypes,
     getBagSeedFallbackStrategy,
+    getAutoAcceptFriendMinLevel,
+    getAutoAcceptRequireOwnLevel,
+    getAutoAcceptHarvestStealEnabled,
+    getAutoAcceptHarvestStealHarvest,
+    getAutoAcceptHarvestStealSteal,
     getIntervals,
     getFriendQuietHours,
     getAutoRelogin,

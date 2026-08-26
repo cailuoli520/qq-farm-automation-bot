@@ -103,6 +103,13 @@ message RejectFriendsRequest {
 
 message RejectFriendsReply {}
 
+// --- 删除好友 ---
+message DelFriendRequest {
+    int64 friend_gid = 1;
+}
+
+message DelFriendReply {}
+
 // --- 设置屏蔽申请 ---
 message SetBlockApplicationsRequest {
     bool block = 1;

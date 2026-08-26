@@ -19,6 +19,16 @@ test('账号配置按白名单收窄并规范化区间、时间和列表', () =>
         friendQuietHours: { enabled: 1, start: '27:90', end: '6:5' },
         autoRelogin: { enabled: 1, delayMinutes: 0, maxPerDay: 1000, loginFailWindowSec: 1 },
         bagSeedPriority: ['20001', 20001, -1, 'bad', 20002],
+        bagSeedLandTypes: {
+            20001: ['PURPLE-GOLD', 'red', 'invalid', 'red'],
+            20002: ['purple-gold', 'gold', 'black', 'red', 'normal'],
+            invalid: ['gold'],
+        },
+        autoAcceptFriendMinLevel: 999,
+        autoAcceptRequireOwnLevel: 1,
+        autoAcceptHarvestStealEnabled: 0,
+        autoAcceptHarvestStealHarvest: 0,
+        autoAcceptHarvestStealSteal: 10000,
         friendBlacklist: ['123', 0, 'bad'],
     });
 
@@ -36,6 +46,12 @@ test('账号配置按白名单收窄并规范化区间、时间和列表', () =>
     assert.equal(config.autoRelogin.maxPerDay, 100);
     assert.equal(config.autoRelogin.loginFailWindowSec, 5);
     assert.deepEqual(config.bagSeedPriority, [20001, 20002]);
+    assert.deepEqual(config.bagSeedLandTypes, { 20001: ['purple-gold', 'red'] });
+    assert.equal(config.autoAcceptFriendMinLevel, 200);
+    assert.equal(config.autoAcceptRequireOwnLevel, true);
+    assert.equal(config.autoAcceptHarvestStealEnabled, false);
+    assert.equal(config.autoAcceptHarvestStealHarvest, 1);
+    assert.equal(config.autoAcceptHarvestStealSteal, 9999);
     assert.deepEqual(config.friendBlacklist, [123]);
 });
 
@@ -44,14 +60,19 @@ test('默认账号配置克隆不会共享可变数组或嵌套对象', () => {
     const second = cloneAccountConfig();
     first.friendBlacklist.push(123);
     first.bagSeedPriority.push(20001);
+    first.bagSeedLandTypes['20001'] = ['red'];
     first.automation.fertilizer_land_types.push('invalid');
     first.intervals.farm = 999;
 
     assert.deepEqual(second.friendBlacklist, []);
     assert.deepEqual(second.bagSeedPriority, []);
-    assert.deepEqual(second.automation.fertilizer_land_types, ['gold', 'black', 'red', 'normal']);
+    assert.deepEqual(second.bagSeedLandTypes, {});
+    assert.deepEqual(second.automation.fertilizer_land_types, ['purple-gold', 'gold', 'black', 'red', 'normal']);
     assert.equal(second.intervals.farm, 2);
     assert.equal(second.automation.mystery_shop_buy, false);
+    assert.equal(second.automation.friend_auto_accept, true);
+    assert.equal(second.automation.friend_help_protect_dog_ignore_exp_limit, true);
+    assert.equal(second.automation.show_manual_fertilizer, true);
 });
 
 test('旧版将推送渠道写入 endpoint 时继续完成兼容迁移', () => {

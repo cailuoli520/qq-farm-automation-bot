@@ -5,6 +5,11 @@
 const { CONFIG, PlantPhase } = require('../config/config');
 const {
     isAutomationOn,
+    getAutoAcceptFriendMinLevel,
+    getAutoAcceptRequireOwnLevel,
+    getAutoAcceptHarvestStealEnabled,
+    getAutoAcceptHarvestStealHarvest,
+    getAutoAcceptHarvestStealSteal,
     getFriendBlacklist,
     getPlantBlacklist,
 } = require('../models/store');
@@ -14,6 +19,12 @@ const { toLong, toNum, log, logWarn, sleep, randomDelay } = require('../utils/ut
 const { getCurrentPhase, setOperationLimitsCallback } = require('./farm');
 const { createScheduler } = require('./scheduler');
 const { createDailyExecutionGate } = require('./daily-execution');
+const { getCareerInfo, getCareerInfoOrNull, clearCareerInfoCache } = require('./career');
+const {
+    evaluateHarvestStealFilter,
+    evaluateLevelFilter,
+    isHarvestStealFilterEnabled,
+} = require('./friend-application-filter');
 const { recordOperation } = require('./stats');
 const { sellAllFruits } = require('./warehouse');
 const { BAD_SHARED_LIMIT_ID, friendOperationLimits, getBeijingDateKey } = require('./friend-operation-limits');
@@ -54,8 +65,22 @@ function errorMessage(error: unknown): string {
 let isCheckingFriends = false;
 let friendLoopRunning = false;
 let externalSchedulerMode = false;
+let applicationQueue: Promise<void> = Promise.resolve();
 const friendScheduler = createScheduler('friend');
 const badDailyExecutionGate = createDailyExecutionGate(getBeijingDateKey);
+const PROTECT_DOG_ID = 90021;
+
+function isProtectDog(dogInfo: DynamicRecord | null | undefined): boolean {
+    return toNum(dogInfo && (dogInfo.dog_id ?? dogInfo.dogId)) === PROTECT_DOG_ID;
+}
+
+function canBypassHelpExpLimitForProtectDog(
+    enterReply: DynamicRecord | null | undefined,
+    enabled = isAutomationOn('friend_help_protect_dog_ignore_exp_limit'),
+): boolean {
+    return enabled
+        && isProtectDog(enterReply && (enterReply.brief_dog_info ?? enterReply.briefDogInfo));
+}
 
 async function acceptFriends(gids: unknown[]): Promise<DynamicRecord> {
     const body = types.AcceptFriendsRequest.encode(types.AcceptFriendsRequest.create({
@@ -63,6 +88,27 @@ async function acceptFriends(gids: unknown[]): Promise<DynamicRecord> {
     })).finish();
     const { body: replyBody } = await sendMsgAsync('gamepb.friendpb.FriendService', 'AcceptFriends', body);
     return types.AcceptFriendsReply.decode(replyBody);
+}
+
+async function rejectFriends(gids: unknown[]): Promise<DynamicRecord> {
+    const body = types.RejectFriendsRequest.encode(types.RejectFriendsRequest.create({
+        friend_gids: gids.map(g => toLong(g)),
+    })).finish();
+    const { body: replyBody } = await sendMsgAsync('gamepb.friendpb.FriendService', 'RejectFriends', body);
+    return types.RejectFriendsReply.decode(replyBody);
+}
+
+async function deleteFriend(friendGid: unknown): Promise<void> {
+    const gid = toNum(friendGid);
+    if (!gid) throw new Error('无效的好友 GID');
+    const body = types.DelFriendRequest.encode(types.DelFriendRequest.create({
+        friend_gid: toLong(gid),
+    })).finish();
+    const { body: replyBody } = await sendMsgAsync('gamepb.friendpb.FriendService', 'DelFriend', body);
+    types.DelFriendReply.decode(replyBody);
+    clearFriendsListCache();
+    clearCareerInfoCache(gid);
+    log('好友', `已删除好友 GID:${gid}`);
 }
 
 async function enterFriendFarm(friendGid: unknown): Promise<DynamicRecord> {
@@ -288,6 +334,7 @@ async function getFriendLandsDetail(friendGid: unknown) {
         return {
             lands: buildFriendLandsDetail(lands),
             summary: analyzed,
+            career: await getCareerInfoOrNull(friendGid),
         };
     } catch {
         return { lands: [], summary: {} };
@@ -487,9 +534,11 @@ async function visitFriend(
     const helpEnabled = !!isAutomationOn('friend_help');
     const stopWhenExpLimit = !!isAutomationOn('friend_help_exp_limit');
     if (!stopWhenExpLimit) resetHelpExpAvailability();
+    const protectDogBypass = canBypassHelpExpLimitForProtectDog(enterReply);
+    const effectiveStopWhenExpLimit = stopWhenExpLimit && !protectDogBypass;
     if (!helpEnabled) {
         // 自动帮忙关闭，直接跳过帮助操作
-    } else if (stopWhenExpLimit && !canGetHelpExperience()) {
+    } else if (effectiveStopWhenExpLimit && !canGetHelpExperience()) {
         // 今日已达到经验上限后停止帮忙
     } else {
         const helpOps = [
@@ -499,14 +548,14 @@ async function visitFriend(
         ];
 
         for (const op of helpOps) {
-            const allowByExp = (!stopWhenExpLimit) || (canGetExpByCandidates(op.expIds) && canGetHelpExperience());
+            const allowByExp = (!effectiveStopWhenExpLimit) || (canGetExpByCandidates(op.expIds) && canGetHelpExperience());
             if (op.list.length > 0 && allowByExp) {
                 const precheck = await checkCanOperateRemote(gid, op.id);
                 if (precheck.canOperate) {
                     const count = await runBatchWithFallback(
                         op.list,
-                        (ids: number[]) => op.fn(gid, ids, stopWhenExpLimit),
-                        (ids: number[]) => op.fn(gid, ids, stopWhenExpLimit)
+                        (ids: number[]) => op.fn(gid, ids, effectiveStopWhenExpLimit),
+                        (ids: number[]) => op.fn(gid, ids, effectiveStopWhenExpLimit)
                     );
                     if (count > 0) {
                         actions.push(`${op.name}${count}`);
@@ -719,7 +768,8 @@ async function visitFriendForHelp(
 
     const stopWhenExpLimit = !!isAutomationOn('friend_help_exp_limit') && !ignoreExpLimit;
     if (!stopWhenExpLimit) resetHelpExpAvailability();
-    if (stopWhenExpLimit && !canGetHelpExperience()) {
+    const protectDogBypassEnabled = !!isAutomationOn('friend_help_protect_dog_ignore_exp_limit');
+    if (stopWhenExpLimit && !canGetHelpExperience() && !protectDogBypassEnabled) {
         return { acted: false, entered: false };
     }
 
@@ -744,6 +794,12 @@ async function visitFriendForHelp(
     }
 
     const status = analyzeFriendLands(lands, myGid, name, {});
+    const protectDogBypass = protectDogBypassEnabled && canBypassHelpExpLimitForProtectDog(enterReply);
+    const effectiveStopWhenExpLimit = stopWhenExpLimit && !protectDogBypass;
+    if (effectiveStopWhenExpLimit && !canGetHelpExperience()) {
+        await leaveFriendFarm(gid);
+        return { acted: false, entered: true };
+    }
 
     const actions: string[] = [];
 
@@ -754,14 +810,14 @@ async function visitFriendForHelp(
     ];
 
     for (const op of helpOps) {
-        const allowByExp = (!stopWhenExpLimit) || (canGetExpByCandidates(op.expIds) && canGetHelpExperience());
+        const allowByExp = (!effectiveStopWhenExpLimit) || (canGetExpByCandidates(op.expIds) && canGetHelpExperience());
         if (op.list.length > 0 && allowByExp) {
             const precheck = await checkCanOperateRemote(gid, op.id);
             if (precheck.canOperate) {
                 const count = await runBatchWithFallback(
                     op.list,
-                    (ids: number[]) => op.fn(gid, ids, stopWhenExpLimit),
-                    (ids: number[]) => op.fn(gid, ids, stopWhenExpLimit)
+                    (ids: number[]) => op.fn(gid, ids, effectiveStopWhenExpLimit),
+                    (ids: number[]) => op.fn(gid, ids, effectiveStopWhenExpLimit)
                 );
                 if (count > 0) {
                     actions.push(`${op.name}${count}`);
@@ -905,7 +961,8 @@ async function checkFriends(options: {
                 // 检查是否还能获得帮助经验
                 // const stopWhenExpLimit = !!isAutomationOn('friend_help_exp_limit');
                 const stopWhenExpLimit = !!isAutomationOn('friend_help_exp_limit') && !ignoreExpLimit;
-                if (stopWhenExpLimit && !canGetHelpExperience()) {
+                const protectDogBypassEnabled = !!isAutomationOn('friend_help_protect_dog_ignore_exp_limit');
+                if (stopWhenExpLimit && !canGetHelpExperience() && !protectDogBypassEnabled) {
                     log('好友', `批量帮助中断：经验已达上限`, { module: 'friend', event: '批量帮助中断', reason: 'exp_limit' });
                     break;
                 }
@@ -1055,12 +1112,12 @@ function refreshFriendCheckLoop(delayMs = 200): void {
  * 处理服务器推送的好友申请
  */
 function onFriendApplicationReceived(applications: DynamicRecord[]): void {
+    if (!Array.isArray(applications) || applications.length === 0) return;
     const names = applications.map((application: DynamicRecord) => application.name || `GID:${toNum(application.gid)}`).join(', ');
     log('申请', `收到 ${applications.length} 个好友申请: ${names}`);
-
-    // 自动同意
-    const gids = applications.map((application: DynamicRecord) => toNum(application.gid));
-    acceptFriendsWithRetry(gids);
+    applicationQueue = applicationQueue
+        .then(() => processFriendApplications(applications))
+        .catch(error => logWarn('申请', `处理失败: ${errorMessage(error)}`));
 }
 
 /**
@@ -1076,6 +1133,7 @@ async function getApplications() {
  * 检查并同意所有待处理的好友申请
  */
 async function checkAndAcceptApplications() {
+    if (!isAutomationOn('friend_auto_accept')) return;
     try {
         const reply = await getApplications();
         const applications = reply.applications || [];
@@ -1084,10 +1142,77 @@ async function checkAndAcceptApplications() {
         const names = applications.map((application: DynamicRecord) => application.name || `GID:${toNum(application.gid)}`).join(', ');
         log('申请', `发现 ${applications.length} 个待处理申请: ${names}`);
 
-        const gids = applications.map((application: DynamicRecord) => toNum(application.gid));
-        await acceptFriendsWithRetry(gids);
+        await processFriendApplications(applications);
     } catch {
         // 静默失败，可能是 QQ 平台不支持
+    }
+}
+
+function getApplicationFilterConfig(): DynamicRecord {
+    const state = getUserState();
+    const accountId = state.accountId;
+    return {
+        minLevel: getAutoAcceptFriendMinLevel(accountId),
+        requireOwnLevel: getAutoAcceptRequireOwnLevel(accountId),
+        ownLevel: toNum(state.level),
+        harvestStealEnabled: getAutoAcceptHarvestStealEnabled(accountId),
+        harvestPart: getAutoAcceptHarvestStealHarvest(accountId),
+        stealPart: getAutoAcceptHarvestStealSteal(accountId),
+    };
+}
+
+async function processFriendApplications(applications: DynamicRecord[]): Promise<void> {
+    if (!isAutomationOn('friend_auto_accept')) return;
+    const config = getApplicationFilterConfig();
+    const checkRatio = isHarvestStealFilterEnabled(config);
+    const blacklist = new Set(getFriendBlacklist(getUserState().accountId));
+    const toAccept: number[] = [];
+    const toReject: Array<{ gid: number; name: string; reason: string }> = [];
+
+    for (let index = 0; index < applications.length; index += 1) {
+        const application = applications[index];
+        const gid = toNum(application.gid);
+        if (!gid) continue;
+        const name = application.name || `GID:${gid}`;
+        if (blacklist.has(gid)) {
+            toReject.push({ gid, name, reason: '已在本地黑名单' });
+            continue;
+        }
+        const levelDecision = evaluateLevelFilter(toNum(application.level), config);
+        if (levelDecision.action === 'reject') {
+            toReject.push({ gid, name, reason: levelDecision.reason || '等级不足' });
+            continue;
+        }
+        if (!checkRatio) {
+            toAccept.push(gid);
+            continue;
+        }
+        try {
+            const career = await getCareerInfo(gid);
+            const ratioDecision = evaluateHarvestStealFilter(career.harvest, career.steal, config);
+            if (ratioDecision.action === 'reject') {
+                toReject.push({ gid, name, reason: ratioDecision.reason || '收偷比不足' });
+            } else {
+                toAccept.push(gid);
+            }
+        } catch (error) {
+            logWarn('申请', `${name} 生涯查询失败，暂不处理: ${errorMessage(error)}`);
+        }
+        if (index < applications.length - 1) await randomDelay(150, 300);
+    }
+
+    for (const item of toReject) log('申请', `拒绝 ${item.name}: ${item.reason}`);
+    await rejectFriendsWithRetry(toReject.map(item => item.gid));
+    await acceptFriendsWithRetry(toAccept);
+}
+
+async function rejectFriendsWithRetry(gids: unknown[]): Promise<void> {
+    if (gids.length === 0) return;
+    try {
+        await rejectFriends(gids);
+        log('申请', `已拒绝 ${gids.length} 人`);
+    } catch (error) {
+        logWarn('申请', `拒绝失败: ${errorMessage(error)}`);
     }
 }
 
@@ -1215,14 +1340,17 @@ async function runBadOncePerDay() {
 }
 
 export {
+    canBypassHelpExpLimitForProtectDog,
     checkFriends,
     clearFriendsListCache,
+    deleteFriend,
     doFriendOperation,
     enterFriendFarm,
     getFriendLandsDetail,
     getFriendsList,
     getOperationLimits,
     isHelpExpLimitReached,
+    isProtectDog,
     leaveFriendFarm,
     refreshFriendCheckLoop,
     runBadOncePerDay,

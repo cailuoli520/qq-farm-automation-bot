@@ -109,9 +109,11 @@ test('土地类型规范化去重并按选择范围过滤', () => {
     assert.equal(getLandTypeByLevel(2), 'red');
     assert.equal(getLandTypeByLevel(3), 'black');
     assert.equal(getLandTypeByLevel(4), 'gold');
+    assert.equal(getLandTypeByLevel(5), 'purple-gold');
 
-    const typesById = new Map([[1, 'normal'], [2, 'red'], [3, 'gold']]);
-    assert.deepEqual(filterLandIdsByTypes([1, 2, 3], typesById, ['red', 'gold']), [2, 3]);
+    const typesById = new Map([[1, 'normal'], [2, 'red'], [3, 'gold'], [4, 'purple-gold']]);
+    assert.deepEqual(filterLandIdsByTypes([1, 2, 3, 4], typesById, ['red', 'gold']), [2, 3]);
+    assert.deepEqual(filterLandIdsByTypes([1, 2, 3, 4], typesById, ['purple-gold']), [4]);
     assert.deepEqual(filterLandIdsByTypes([1, 2, 3], typesById, []), []);
 });
 
