@@ -26,6 +26,7 @@ export interface AutomationConfig {
   friend_steal?: boolean
   friend_help?: boolean
   friend_bad?: boolean
+  rain_poetry_auto?: boolean
   show_manual_fertilizer?: boolean
 }
 

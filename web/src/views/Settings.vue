@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { useIntervalFn } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
-import { computed, onMounted, ref, watch, watchEffect } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref, watch, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api'
-import AccountModal from '@/components/AccountModal.vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
@@ -24,13 +23,11 @@ const farmStore = useFarmStore()
 const statusStore = useStatusStore()
 const { status } = storeToRefs(statusStore)
 
+const AccountModal = defineAsyncComponent(() => import('@/components/AccountModal.vue'))
+
 const activeTab = ref<'account' | 'strategy' | 'automation' | 'user'>(
   (localStorage.getItem('settings-active-tab') as 'account' | 'strategy' | 'automation' | 'user') || 'account',
 )
-
-watch(activeTab, (newTab) => {
-  localStorage.setItem('settings-active-tab', newTab)
-})
 
 const tabs = [
   { key: 'account', label: '账号管理', icon: 'i-carbon-user-settings' },
@@ -95,20 +92,6 @@ const addAccountDisabledReason = computed(() => {
 
 const stoppedAccounts = computed(() => accounts.value.filter((acc: any) => !acc.running))
 const stoppedAccountsCount = computed(() => stoppedAccounts.value.length)
-
-onMounted(async () => {
-  await accountStore.fetchAccounts()
-  if (!currentAccountId.value && accounts.value.length > 0 && accounts.value[0]) {
-    accountStore.selectAccount(String(accounts.value[0].id))
-  }
-  if (currentAccountId.value) {
-    await settingStore.fetchSettings(currentAccountId.value)
-    syncLocalStrategySettings()
-    syncLocalAutomationSettings()
-    syncLocalOfflineSettings()
-    await farmStore.fetchSeeds(currentAccountId.value)
-  }
-})
 
 useIntervalFn(() => {
   accountStore.fetchAccounts()
@@ -458,12 +441,16 @@ function dropBagSeed(seedId: number, event: DragEvent) {
 
 watch(
   () => [
+    activeTab.value,
     localStrategySettings.value.plantingStrategy,
     currentAccountId.value,
     Boolean(currentAccount.value?.running),
     status.value,
   ] as const,
-  ([strategy, accountId, running, currentStatus]) => {
+  ([tab, strategy, accountId, running, currentStatus]) => {
+    if (tab !== 'strategy')
+      return
+
     const watchKey = `${strategy}:${accountId}`
     if (watchKey !== bagSeedsWatchKey) {
       bagSeedsWatchKey = watchKey
@@ -509,6 +496,11 @@ const analyticsSortByMap: Record<string, string> = {
 const strategyPreviewLabel = ref<string | null>(null)
 
 watchEffect(async () => {
+  if (activeTab.value !== 'strategy') {
+    strategyPreviewLabel.value = null
+    return
+  }
+
   let strategy = localStrategySettings.value.plantingStrategy
   if (strategy === 'preferred') {
     strategyPreviewLabel.value = null
@@ -586,14 +578,6 @@ function syncLocalStrategySettings() {
   }
 }
 
-async function loadStrategyData() {
-  if (currentAccountId.value) {
-    await settingStore.fetchSettings(currentAccountId.value)
-    syncLocalStrategySettings()
-    await farmStore.fetchSeeds(currentAccountId.value)
-  }
-}
-
 async function saveStrategySettings() {
   if (!currentAccountId.value)
     return
@@ -617,16 +601,30 @@ async function saveStrategySettings() {
   }
 }
 
-watch(currentAccountId, async () => {
-  if (currentAccountId.value) {
-    await loadStrategyData()
-    syncLocalAutomationSettings()
-    syncLocalOfflineSettings()
-  }
-})
-
 // ==================== 自动控制 ====================
 const automationSaving = ref(false)
+
+type AutomationSectionKey = 'core' | 'friend' | 'fertilizer' | 'commerce' | 'account'
+
+const automationSections = [
+  { key: 'core', label: '基础任务', icon: 'i-carbon-home', description: '农场循环、任务、出售和地块维护' },
+  { key: 'friend', label: '好友互动', icon: 'i-carbon-user-multiple', description: '好友巡查、偷菜、帮忙和申请过滤' },
+  { key: 'fertilizer', label: '化肥管理', icon: 'i-carbon-chemistry', description: '施肥策略、化肥补充和购买规则' },
+  { key: 'commerce', label: '商店与活动', icon: 'i-carbon-store', description: '神秘商人和限时活动自动化' },
+  { key: 'account', label: '账号维护', icon: 'i-carbon-settings', description: '掉线后的账号自动重登策略' },
+] as const
+
+const savedAutomationSection = localStorage.getItem('settings-automation-section')
+const automationSection = ref<AutomationSectionKey>(
+  automationSections.some(section => section.key === savedAutomationSection)
+    ? savedAutomationSection as AutomationSectionKey
+    : 'core',
+)
+const currentAutomationSection = computed(() => automationSections.find(section => section.key === automationSection.value)!)
+
+watch(automationSection, (section) => {
+  localStorage.setItem('settings-automation-section', section)
+})
 
 const allFertilizerLandTypes = allLandTypes
 
@@ -665,6 +663,7 @@ const localAutomationSettings = ref({
     friend_steal: false,
     friend_help: false,
     friend_bad: false,
+    rain_poetry_auto: true,
     friend_help_exp_limit: false,
     friend_help_protect_dog_ignore_exp_limit: true,
     fertilizer_gift: false,
@@ -719,6 +718,7 @@ function syncLocalAutomationSettings() {
         friend_steal: false,
         friend_help: false,
         friend_bad: false,
+        rain_poetry_auto: true,
         friend_help_exp_limit: false,
         friend_help_protect_dog_ignore_exp_limit: true,
         fertilizer_gift: false,
@@ -751,6 +751,7 @@ function syncLocalAutomationSettings() {
         friend_steal: false,
         friend_help: false,
         friend_bad: false,
+        rain_poetry_auto: true,
         friend_help_exp_limit: false,
         friend_help_protect_dog_ignore_exp_limit: true,
         fertilizer_gift: false,
@@ -1015,6 +1016,93 @@ async function handleTestOffline() {
     offlineTesting.value = false
   }
 }
+
+// ==================== 标签页按需加载 ====================
+let settingsPageReady = false
+let loadedSettingsAccountId = ''
+let loadedSeedsAccountId = ''
+let settingsLoadChain: Promise<void> = Promise.resolve()
+let seedsLoadChain: Promise<void> = Promise.resolve()
+const strategySeedsLoading = ref(false)
+
+function ensureSettingsLoaded(accountId: string) {
+  settingsLoadChain = settingsLoadChain.catch(() => {}).then(async () => {
+    if (loadedSettingsAccountId === accountId)
+      return
+    await settingStore.fetchSettings(accountId)
+    loadedSettingsAccountId = accountId
+  })
+  return settingsLoadChain
+}
+
+function ensureSeedsLoaded(accountId: string) {
+  seedsLoadChain = seedsLoadChain.catch(() => {}).then(async () => {
+    if (loadedSeedsAccountId === accountId)
+      return
+    strategySeedsLoading.value = true
+    try {
+      await farmStore.fetchSeeds(accountId)
+      loadedSeedsAccountId = accountId
+    }
+    finally {
+      strategySeedsLoading.value = false
+    }
+  })
+  return seedsLoadChain
+}
+
+async function loadActiveTabData() {
+  if (!settingsPageReady || activeTab.value === 'account')
+    return
+
+  const accountId = String(currentAccountId.value || '')
+  const requestedTab = activeTab.value
+  if (!accountId)
+    return
+
+  try {
+    if (requestedTab === 'strategy') {
+      await Promise.all([
+        ensureSettingsLoaded(accountId),
+        ensureSeedsLoaded(accountId),
+      ])
+    }
+    else {
+      await ensureSettingsLoaded(accountId)
+    }
+
+    if (accountId !== currentAccountId.value || requestedTab !== activeTab.value)
+      return
+
+    if (requestedTab === 'strategy')
+      syncLocalStrategySettings()
+    else if (requestedTab === 'automation')
+      syncLocalAutomationSettings()
+    else
+      syncLocalOfflineSettings()
+  }
+  catch (error) {
+    console.error(`加载${tabs.find(tab => tab.key === requestedTab)?.label || '设置'}失败`, error)
+  }
+}
+
+watch(activeTab, (newTab) => {
+  localStorage.setItem('settings-active-tab', newTab)
+  void loadActiveTabData()
+})
+
+watch(currentAccountId, (newAccountId, oldAccountId) => {
+  if (newAccountId !== oldAccountId)
+    void loadActiveTabData()
+})
+
+onMounted(async () => {
+  if (accounts.value.length === 0)
+    await accountStore.fetchAccounts()
+
+  settingsPageReady = true
+  await loadActiveTabData()
+})
 </script>
 
 <template>
@@ -1196,6 +1284,7 @@ async function handleTestOffline() {
           </div>
 
           <AccountModal
+            v-if="showModal"
             :show="showModal"
             :edit-data="editingAccount"
             @close="showModal = false"
@@ -1239,7 +1328,7 @@ async function handleTestOffline() {
             </h3>
           </div>
 
-          <div v-if="settingsLoading" class="py-4 text-center text-gray-500">
+          <div v-if="settingsLoading || strategySeedsLoading" class="py-4 text-center text-gray-500">
             <div class="i-svg-spinners-ring-resize mx-auto mb-2 text-2xl" />
             <p>加载中...</p>
           </div>
@@ -1504,24 +1593,66 @@ async function handleTestOffline() {
           </div>
 
           <div v-else class="space-y-4">
-            <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
-              <BaseSwitch v-model="localAutomationSettings.automation.farm" label="自动种植收获" />
-              <BaseSwitch v-model="localAutomationSettings.automation.task" label="自动做任务" />
-              <BaseSwitch v-model="localAutomationSettings.automation.sell" label="自动卖果实" />
-              <BaseSwitch v-model="localAutomationSettings.automation.mystery_shop_buy" label="自动购买神秘商品" />
-              <BaseSwitch v-model="localAutomationSettings.automation.friend" label="自动好友互动" />
-              <BaseSwitch v-model="localAutomationSettings.automation.friend_auto_accept" label="自动通过好友申请" />
-              <BaseSwitch v-model="localAutomationSettings.automation.farm_push" label="推送触发巡田" />
-              <BaseSwitch v-model="localAutomationSettings.automation.land_upgrade" label="自动升级土地" />
-              <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_gift" label="自动填充化肥" />
-              <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_buy_organic" label="自动购买有机化肥" />
-              <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_buy_normal" label="自动购买无机化肥" />
-              <BaseSwitch v-model="localAutomationSettings.automation.skip_own_weed_bug" label="不除自己草虫" />
-              <BaseSwitch v-model="localAutomationSettings.automation.show_manual_fertilizer" label="显示手动施肥按钮" />
-              <BaseSwitch v-model="localAutomationSettings.autoRelogin.enabled" label="启用自动重登" />
+            <div class="overflow-x-auto pb-1">
+              <div class="grid grid-cols-5 min-w-[620px] gap-2">
+                <button
+                  v-for="section in automationSections"
+                  :key="section.key"
+                  class="flex items-center justify-center gap-2 border rounded-lg px-3 py-2 text-sm font-medium transition-colors"
+                  :class="automationSection === section.key
+                    ? 'border-transparent text-white shadow-sm'
+                    : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'"
+                  :style="automationSection === section.key ? { backgroundColor: 'var(--theme-primary)' } : {}"
+                  @click="automationSection = section.key"
+                >
+                  <div :class="section.icon" />
+                  {{ section.label }}
+                </button>
+              </div>
             </div>
 
-            <div class="border border-purple-200 rounded bg-purple-50/60 p-3 text-sm space-y-3 dark:border-purple-800/60 dark:bg-purple-900/10">
+            <div class="border border-gray-200 rounded-lg bg-gray-50/70 p-4 dark:border-gray-700 dark:bg-gray-900/20">
+              <div class="mb-4">
+                <h4 class="text-base text-gray-900 font-semibold dark:text-gray-100">
+                  {{ currentAutomationSection.label }}
+                </h4>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {{ currentAutomationSection.description }}
+                </p>
+              </div>
+
+              <div v-if="automationSection === 'core'" class="grid grid-cols-1 gap-4 lg:grid-cols-3 sm:grid-cols-2">
+                <BaseSwitch v-model="localAutomationSettings.automation.farm" label="自动种植收获" />
+                <BaseSwitch v-model="localAutomationSettings.automation.task" label="自动做任务" />
+                <BaseSwitch v-model="localAutomationSettings.automation.sell" label="自动卖果实" />
+                <BaseSwitch v-model="localAutomationSettings.automation.farm_push" label="推送触发巡田" />
+                <BaseSwitch v-model="localAutomationSettings.automation.land_upgrade" label="自动升级土地" />
+                <BaseSwitch v-model="localAutomationSettings.automation.skip_own_weed_bug" label="不除自己草虫" />
+                <BaseSwitch v-model="localAutomationSettings.automation.show_manual_fertilizer" label="显示手动施肥按钮" />
+              </div>
+
+              <div v-else-if="automationSection === 'friend'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <BaseSwitch v-model="localAutomationSettings.automation.friend" label="自动好友互动" />
+                <BaseSwitch v-model="localAutomationSettings.automation.friend_auto_accept" label="自动通过好友申请" />
+              </div>
+
+              <div v-else-if="automationSection === 'fertilizer'" class="grid grid-cols-1 gap-4 lg:grid-cols-3 sm:grid-cols-2">
+                <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_gift" label="自动填充化肥" />
+                <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_buy_organic" label="自动购买有机化肥" />
+                <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_buy_normal" label="自动购买无机化肥" />
+              </div>
+
+              <div v-else-if="automationSection === 'commerce'" class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <BaseSwitch v-model="localAutomationSettings.automation.mystery_shop_buy" label="自动购买神秘商品" />
+                <BaseSwitch v-model="localAutomationSettings.automation.rain_poetry_auto" label="自动参与雨落成诗" />
+              </div>
+
+              <div v-else class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <BaseSwitch v-model="localAutomationSettings.autoRelogin.enabled" label="启用自动重登" />
+              </div>
+            </div>
+
+            <div v-if="automationSection === 'commerce'" class="border border-purple-200 rounded bg-purple-50/60 p-3 text-sm space-y-3 dark:border-purple-800/60 dark:bg-purple-900/10">
               <div class="text-purple-800 font-medium dark:text-purple-300">
                 神秘商人保护
               </div>
@@ -1549,7 +1680,7 @@ async function handleTestOffline() {
               </p>
             </div>
 
-            <div v-if="localAutomationSettings.automation.fertilizer_buy_organic || localAutomationSettings.automation.fertilizer_buy_normal" class="rounded bg-green-50 p-3 text-sm space-y-3 dark:bg-green-900/20">
+            <div v-if="automationSection === 'fertilizer' && (localAutomationSettings.automation.fertilizer_buy_organic || localAutomationSettings.automation.fertilizer_buy_normal)" class="rounded bg-green-50 p-3 text-sm space-y-3 dark:bg-green-900/20">
               <div v-if="localAutomationSettings.automation.fertilizer_buy_organic" class="space-y-2">
                 <div class="text-green-700 font-medium dark:text-green-400">
                   有机化肥设置
@@ -1606,7 +1737,7 @@ async function handleTestOffline() {
               </p>
             </div>
 
-            <div v-if="localAutomationSettings.autoRelogin.enabled" class="rounded bg-yellow-50 p-3 text-sm space-y-3 dark:bg-yellow-900/20">
+            <div v-if="automationSection === 'account' && localAutomationSettings.autoRelogin.enabled" class="rounded bg-yellow-50 p-3 text-sm space-y-3 dark:bg-yellow-900/20">
               <div class="text-yellow-700 font-medium dark:text-yellow-400">
                 自动重登设置
               </div>
@@ -1645,7 +1776,7 @@ async function handleTestOffline() {
               </div>
             </div>
 
-            <div v-if="localAutomationSettings.automation.friend" class="flex flex-wrap gap-4 rounded bg-blue-50 p-3 text-sm dark:bg-blue-900/20">
+            <div v-if="automationSection === 'friend' && localAutomationSettings.automation.friend" class="flex flex-wrap gap-4 rounded bg-blue-50 p-3 text-sm dark:bg-blue-900/20">
               <BaseSwitch v-model="localAutomationSettings.automation.friend_steal" label="自动偷菜" />
               <BaseSwitch v-model="localAutomationSettings.automation.friend_help" label="自动帮忙" />
               <BaseSwitch v-model="localAutomationSettings.automation.friend_bad" label="自动捣乱" />
@@ -1656,7 +1787,7 @@ async function handleTestOffline() {
               />
             </div>
 
-            <div v-if="localAutomationSettings.automation.friend_auto_accept" class="rounded bg-sky-50 p-3 text-sm space-y-3 dark:bg-sky-900/20">
+            <div v-if="automationSection === 'friend' && localAutomationSettings.automation.friend_auto_accept" class="rounded bg-sky-50 p-3 text-sm space-y-3 dark:bg-sky-900/20">
               <div class="text-sky-700 font-medium dark:text-sky-300">
                 好友申请过滤
               </div>
@@ -1698,7 +1829,7 @@ async function handleTestOffline() {
               </p>
             </div>
 
-            <div class="space-y-3">
+            <div v-if="automationSection === 'fertilizer'" class="space-y-3">
               <div class="border border-amber-200 rounded bg-amber-50/60 p-3 dark:border-amber-800/60 dark:bg-amber-900/10">
                 <div class="mb-2 text-sm text-amber-800 font-medium dark:text-amber-300">
                   施肥范围
