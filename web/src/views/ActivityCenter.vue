@@ -150,6 +150,7 @@ watch(() => visibleActivityEvents.value.map(event => event.key).join(','), () =>
     activeEvent.value = visibleActivityEvents.value[0]?.key || 'stellar'
 }, { immediate: true })
 watch(activeEvent, (eventKey) => {
+  activityStore.clearActionFeedback()
   const event = visibleActivityEvents.value.find(entry => entry.key === eventKey)
   if (event && !event.tabs.includes(activeTab.value))
     activeTab.value = event.tabs[0] || 'travel'

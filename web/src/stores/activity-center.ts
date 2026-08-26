@@ -416,6 +416,11 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     rainWeatherError.value = ''
   }
 
+  function clearActionFeedback() {
+    actionError.value = ''
+    notice.value = ''
+  }
+
   async function checkRainWeather(accountId: string, friendGid: string) {
     const version = ++rainWeatherRequestVersion
     rainWeatherLoading.value = true
@@ -503,6 +508,7 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     useQixiDew,
     checkRainWeather,
     clearRainWeather,
+    clearActionFeedback,
     exchangeRainBottle,
     collectRainWeather,
     useRainThunderstorm,

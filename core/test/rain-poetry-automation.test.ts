@@ -12,6 +12,7 @@ function activity(overrides: any = {}) {
         actions: { thunderstorm: { enabled: false } },
         exchangeItems: [],
         researchNodes: [],
+        tasks: [],
         ...overrides,
     };
 }
@@ -106,6 +107,7 @@ test('纯策略只根据快照生成兑换、研究、召唤和扫描计划', ()
     const plan = planRainPoetryAutomation(activity({
         balances: { collectionBottle: '2' },
         actions: { thunderstorm: { enabled: true } },
+        tasks: [{ itemId: '5002', progress: '1', target: '10', completed: false }],
         exchangeItems: [{ id: '200', available: true, item: { id: '5001' } }],
         researchNodes: [
             { id: '1000', unlockable: true, claimed: false },
@@ -121,6 +123,19 @@ test('纯策略只根据快照生成兑换、研究、召唤和扫描计划', ()
         useThunderstorm: true,
     });
     assert.equal(planRainPoetryAutomation(null).active, false);
+});
+
+test('仅在召唤或闪电变异任务尚未完成时自动使用雷雨召唤瓶', () => {
+    const enabled = { thunderstorm: { enabled: true } };
+    const plan = (tasks: any[]) => planRainPoetryAutomation(activity({ actions: enabled, tasks })).useThunderstorm;
+
+    assert.equal(plan([]), false);
+    assert.equal(plan([{ itemId: '5002', progress: '10', target: '10', completed: true }]), false);
+    assert.equal(plan([{ itemId: '5002', progress: '10', target: '10', completed: false }]), false);
+    assert.equal(plan([{ itemId: '5002', progress: '0', target: '0', completed: false }]), false);
+    assert.equal(plan([{ itemId: '5001', name: '使用天气采集瓶', progress: '0', target: '10', completed: false }]), false);
+    assert.equal(plan([{ itemId: '5002', progress: '9', target: '10', completed: false }]), true);
+    assert.equal(plan([{ itemId: '29003', name: '收获闪电变异作物', progress: '3', target: '10', completed: false }]), true);
 });
 
 test('已有好友巡查会话可直接采集天气，不发起额外好友访问', async () => {
@@ -243,6 +258,7 @@ test('自动循环按兑换、逐级研究、召唤和采集顺序推进', async
         balances: { collectionBottle: '1' },
         exchangeItems: [],
         actions: { thunderstorm: { enabled: true } },
+        tasks: [{ itemId: '5002', progress: '0', target: '10', completed: false }],
         researchNodes: [{ id: '1000', unlockable: true, claimed: false }],
     });
     const afterFirstResearch = activity({

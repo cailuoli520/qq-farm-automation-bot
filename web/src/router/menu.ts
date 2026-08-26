@@ -26,7 +26,7 @@ export const menuRoutes: MenuItem[] = [
     path: 'activity-center',
     name: 'activity-center',
     label: '活动',
-    icon: '✨',
+    icon: 'i-carbon-events',
     component: () => import('@/views/ActivityCenter.vue'),
   },
   {
