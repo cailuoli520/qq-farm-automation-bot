@@ -1,8 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   land: any
+  showFertilizerActions?: boolean
+  fertilizerPending?: boolean
+}>(), {
+  showFertilizerActions: false,
+  fertilizerPending: false,
+})
+
+const emit = defineEmits<{
+  fertilize: [land: any, fertilizerType: 'normal' | 'organic']
 }>()
 
 const land = computed(() => props.land)
@@ -60,6 +69,9 @@ function getLandStatusClass(land: any) {
     case 4: // 金土地
       baseClass = 'bg-amber-100/80 dark:bg-amber-900/20 border-amber-300 dark:border-amber-600'
       break
+    case 5: // 紫金土地
+      baseClass = 'bg-purple-100/80 dark:bg-purple-900/20 border-purple-300 dark:border-purple-600'
+      break
   }
 
   // 状态叠加
@@ -102,6 +114,7 @@ function getLandTypeName(level: number) {
     2: '红土地',
     3: '黑土地',
     4: '金土地',
+    5: '紫金土地',
   }
   return typeMap[Number(level) || 0] || ''
 }
@@ -110,6 +123,12 @@ function getPlantSizeText(land: any) {
   if (size <= 1)
     return ''
   return `${size}x${size}`
+}
+
+function requestFertilize(event: Event, fertilizerType: 'normal' | 'organic') {
+  event.stopPropagation()
+  if (!props.fertilizerPending)
+    emit('fertilize', props.land, fertilizerType)
 }
 </script>
 
@@ -188,6 +207,22 @@ function getPlantSizeText(land: any) {
       >{{ effect.itemName }}</span>
       <!-- For friends view -->
       <span v-if="land.status === 'harvestable'" class="rounded bg-orange-100 px-0.5 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">可偷</span>
+    </div>
+    <div v-if="showFertilizerActions" class="grid grid-cols-2 mt-2 w-full gap-1" @click.stop>
+      <button
+        class="rounded bg-emerald-100 px-1 py-1 text-[10px] text-emerald-700 disabled:opacity-50"
+        :disabled="fertilizerPending"
+        @click="requestFertilize($event, 'normal')"
+      >
+        普通肥
+      </button>
+      <button
+        class="rounded bg-lime-100 px-1 py-1 text-[10px] text-lime-700 disabled:opacity-50"
+        :disabled="fertilizerPending || land.leftInorcFertTimes === 0"
+        @click="requestFertilize($event, 'organic')"
+      >
+        有机肥<span v-if="land.leftInorcFertTimes != null">({{ land.leftInorcFertTimes }})</span>
+      </button>
     </div>
   </div>
 </template>

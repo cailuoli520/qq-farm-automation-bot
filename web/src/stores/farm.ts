@@ -15,27 +15,49 @@ export interface Land {
   [key: string]: any
 }
 
+export type FertilizerType = 'normal' | 'organic'
+
 export const useFarmStore = defineStore('farm', () => {
   const lands = ref<Land[]>([])
   const seeds = ref<any[]>([])
   const summary = ref<any>({})
+  const career = ref<any>(null)
   const loading = ref(false)
+  let activeAccountId = ''
+  let landsRequestVersion = 0
+
+  function activateAccount(accountId: string) {
+    const nextAccountId = String(accountId || '').trim()
+    if (activeAccountId === nextAccountId)
+      return
+    activeAccountId = nextAccountId
+    landsRequestVersion += 1
+    lands.value = []
+    seeds.value = []
+    summary.value = {}
+    career.value = null
+    loading.value = false
+  }
 
   async function fetchLands(accountId: string) {
-    if (!accountId)
+    const requestedAccountId = String(accountId || '').trim()
+    if (!requestedAccountId)
       return
+    const requestVersion = ++landsRequestVersion
     loading.value = true
     try {
       const { data } = await api.get('/api/lands', {
-        headers: { 'x-account-id': accountId },
+        headers: { 'x-account-id': requestedAccountId },
       })
-      if (data && data.ok) {
+      if (activeAccountId === requestedAccountId && requestVersion === landsRequestVersion && data?.ok) {
         lands.value = data.data.lands || []
         summary.value = data.data.summary || {}
+        career.value = data.data.career || null
       }
     }
     finally {
-      loading.value = false
+      if (activeAccountId === requestedAccountId && requestVersion === landsRequestVersion)
+        loading.value = false
     }
   }
 
@@ -55,8 +77,37 @@ export const useFarmStore = defineStore('farm', () => {
     await api.post('/api/farm/operate', { opType }, {
       headers: { 'x-account-id': accountId },
     })
-    await fetchLands(accountId)
+    if (activeAccountId === accountId)
+      await fetchLands(accountId)
   }
 
-  return { lands, summary, seeds, loading, fetchLands, fetchSeeds, operate }
+  async function fertilizeLand(accountId: string, landId: number, fertilizerType: FertilizerType) {
+    if (!accountId || !landId)
+      return null
+    const { data } = await api.post('/api/farm/fertilize', { landId, fertilizerType }, {
+      headers: { 'x-account-id': accountId },
+      skipErrorToast: true,
+    } as any)
+    if (!data?.ok)
+      throw new Error(data?.error || '施肥失败')
+    if (activeAccountId !== accountId)
+      return data.data
+    if (data.data?.updatedLand) {
+      const index = lands.value.findIndex(land => land.id === landId)
+      if (index >= 0)
+        lands.value[index] = data.data.updatedLand
+    }
+    else {
+      // 施肥写请求已经成功，刷新失败不能再向用户报告写失败，否则可能诱导重复施肥。
+      try {
+        await fetchLands(accountId)
+      }
+      catch {
+        // 下一轮自动刷新会补齐地块状态。
+      }
+    }
+    return data.data
+  }
+
+  return { lands, summary, career, seeds, loading, activateAccount, fetchLands, fetchSeeds, operate, fertilizeLand }
 })

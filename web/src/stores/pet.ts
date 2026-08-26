@@ -7,6 +7,10 @@ export const usePetStore = defineStore('pet', () => {
   const loading = ref(false)
   const operating = ref(false)
   const error = ref('')
+  const giftError = ref('')
+  const protectLogs = ref<any[]>([])
+  const protectLogsTotal = ref(0)
+  const protectLogsLoading = ref(false)
   const dogs = computed(() => snapshot.value?.dogs || [])
   const foods = computed(() => snapshot.value?.foods || [])
   const activeDog = computed(() => dogs.value.find((dog: any) => dog.active) || null)
@@ -15,6 +19,7 @@ export const usePetStore = defineStore('pet', () => {
   let readVersion = 0
   let mutationVersion = 0
   let mutationAccountId = ''
+  let protectLogsVersion = 0
 
   function activateAccount(accountId: string) {
     if (activeAccountId === accountId)
@@ -23,11 +28,16 @@ export const usePetStore = defineStore('pet', () => {
     stateVersion += 1
     readVersion += 1
     mutationVersion += 1
+    protectLogsVersion += 1
     mutationAccountId = ''
     snapshot.value = null
     loading.value = false
     operating.value = false
     error.value = ''
+    giftError.value = ''
+    protectLogs.value = []
+    protectLogsTotal.value = 0
+    protectLogsLoading.value = false
   }
 
   async function request(accountId: string, operation: () => Promise<any>, mutation = false) {
@@ -103,17 +113,117 @@ export const usePetStore = defineStore('pet', () => {
     }), true)
   }
 
+  async function claimGifts(accountId: string) {
+    const requestedAccountId = String(accountId || '').trim()
+    if (!requestedAccountId)
+      return null
+    activateAccount(requestedAccountId)
+    if (operating.value)
+      return null
+
+    const writeVersion = ++stateVersion
+    const lifecycleVersion = ++mutationVersion
+    mutationAccountId = requestedAccountId
+    operating.value = true
+    giftError.value = ''
+    try {
+      const response = await api.post('/api/pets/gifts/claim', {}, {
+        headers: { 'x-account-id': requestedAccountId },
+        timeout: 155000,
+      })
+      if (activeAccountId !== requestedAccountId || writeVersion !== stateVersion)
+        return null
+      if (!response.data?.ok)
+        throw new Error(response.data?.error || '领取宠物礼包失败')
+      const result = response.data.data || {}
+      if (snapshot.value) {
+        snapshot.value = {
+          ...snapshot.value,
+          pendingGiftCount: Math.max(0, Number(result.pending) || 0),
+        }
+      }
+      return result
+    }
+    catch (caught: any) {
+      if (activeAccountId === requestedAccountId && writeVersion === stateVersion)
+        giftError.value = caught?.response?.data?.error || caught?.message || '领取宠物礼包失败'
+      return null
+    }
+    finally {
+      if (activeAccountId === requestedAccountId && lifecycleVersion === mutationVersion) {
+        mutationAccountId = ''
+        operating.value = false
+      }
+    }
+  }
+
+  async function fetchProtectLogs(accountId: string) {
+    const requestedAccountId = String(accountId || '').trim()
+    if (!requestedAccountId)
+      return false
+    activateAccount(requestedAccountId)
+    const version = ++protectLogsVersion
+    protectLogsLoading.value = true
+    error.value = ''
+    try {
+      const response = await api.get('/api/pets/protect-logs', {
+        headers: { 'x-account-id': requestedAccountId },
+        timeout: 95000,
+      })
+      if (activeAccountId !== requestedAccountId || version !== protectLogsVersion)
+        return false
+      if (!response.data?.ok)
+        throw new Error(response.data?.error || '获取守护记录失败')
+      protectLogs.value = Array.isArray(response.data.data?.logs) ? response.data.data.logs : []
+      protectLogsTotal.value = Math.max(protectLogs.value.length, Number(response.data.data?.total) || 0)
+      return true
+    }
+    catch (caught: any) {
+      if (activeAccountId === requestedAccountId && version === protectLogsVersion)
+        error.value = caught?.response?.data?.error || caught?.message || '获取守护记录失败'
+      return false
+    }
+    finally {
+      if (activeAccountId === requestedAccountId && version === protectLogsVersion)
+        protectLogsLoading.value = false
+    }
+  }
+
   function reset() {
     activeAccountId = ''
     stateVersion += 1
     readVersion += 1
     mutationVersion += 1
+    protectLogsVersion += 1
     mutationAccountId = ''
     snapshot.value = null
     loading.value = false
     operating.value = false
     error.value = ''
+    giftError.value = ''
+    protectLogs.value = []
+    protectLogsTotal.value = 0
+    protectLogsLoading.value = false
   }
 
-  return { snapshot, dogs, foods, activeDog, loading, operating, error, fetch, deploy, withdraw, useFood, reset }
+  return {
+    snapshot,
+    dogs,
+    foods,
+    activeDog,
+    loading,
+    operating,
+    error,
+    giftError,
+    protectLogs,
+    protectLogsTotal,
+    protectLogsLoading,
+    fetch,
+    deploy,
+    withdraw,
+    useFood,
+    claimGifts,
+    fetchProtectLogs,
+    reset,
+  }
 })

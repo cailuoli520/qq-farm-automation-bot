@@ -1,21 +1,29 @@
 <script setup lang="ts">
+import type { FertilizerType } from '@/stores/farm'
 import { useIntervalFn } from '@vueuse/core'
 import { storeToRefs } from 'pinia'
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import ConfirmModal from '@/components/ConfirmModal.vue'
 import LandCard from '@/components/LandCard.vue'
 import { useAccountStore } from '@/stores/account'
 import { useFarmStore } from '@/stores/farm'
+import { useSettingStore } from '@/stores/setting'
 import { useStatusStore } from '@/stores/status'
+import { useToastStore } from '@/stores/toast'
 
 const farmStore = useFarmStore()
 const accountStore = useAccountStore()
 const statusStore = useStatusStore()
-const { lands, summary, loading } = storeToRefs(farmStore)
+const settingStore = useSettingStore()
+const toast = useToastStore()
+const { lands, summary, career, loading } = storeToRefs(farmStore)
 const { currentAccountId, currentAccount } = storeToRefs(accountStore)
 const { status, loading: statusLoading, realtimeConnected } = storeToRefs(statusStore)
+farmStore.activateAccount(currentAccountId.value)
 
 const operating = ref(false)
+const fertilizingLandId = ref(0)
+const showManualFertilizerButtons = computed(() => settingStore.settings.automation?.show_manual_fertilizer !== false)
 const confirmVisible = ref(false)
 const confirmConfig = ref({
   title: '',
@@ -75,12 +83,39 @@ async function refresh() {
     }
 
     if (acc.running && status.value?.connection?.connected) {
-      farmStore.fetchLands(currentAccountId.value)
+      await Promise.all([
+        farmStore.fetchLands(currentAccountId.value),
+        settingStore.fetchSettings(currentAccountId.value),
+      ])
     }
   }
 }
 
-watch(currentAccountId, () => {
+function isFertilizeCandidate(land: any) {
+  return land?.status === 'growing' && !land?.occupiedByMaster
+}
+
+async function handleFertilize(land: any, fertilizerType: FertilizerType) {
+  if (!currentAccountId.value || fertilizingLandId.value)
+    return
+  const accountId = currentAccountId.value
+  fertilizingLandId.value = Number(land?.id) || 0
+  try {
+    await farmStore.fertilizeLand(accountId, fertilizingLandId.value, fertilizerType)
+    if (currentAccountId.value === accountId)
+      toast.success(`第 ${fertilizingLandId.value} 块地施肥成功`)
+  }
+  catch (error: any) {
+    if (currentAccountId.value === accountId)
+      toast.error(error?.response?.data?.error || error?.message || '施肥失败')
+  }
+  finally {
+    fertilizingLandId.value = 0
+  }
+}
+
+watch(currentAccountId, (accountId) => {
+  farmStore.activateAccount(accountId)
   refresh()
 })
 
@@ -140,6 +175,10 @@ onUnmounted(() => {
 
       <!-- Summary -->
       <div class="flex flex-wrap gap-4 border-b border-gray-100 bg-gray-50 p-4 text-sm dark:border-gray-700 dark:bg-gray-900/50">
+        <div v-if="career" class="flex items-center gap-1.5 rounded-full bg-blue-100 px-3 py-1 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+          <div class="i-carbon-chart-line" />
+          <span class="font-medium">生涯收获 {{ career.harvest }} / 偷取 {{ career.steal }}</span>
+        </div>
         <div class="flex items-center gap-1.5 rounded-full bg-orange-100 px-3 py-1 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">
           <div class="i-carbon-clean" />
           <span class="font-medium">可收: {{ summary?.harvestable || 0 }}</span>
@@ -197,6 +236,9 @@ onUnmounted(() => {
             v-for="land in lands"
             :key="land.id"
             :land="land"
+            :show-fertilizer-actions="showManualFertilizerButtons && isFertilizeCandidate(land)"
+            :fertilizer-pending="fertilizingLandId === land.id"
+            @fertilize="handleFertilize"
           />
         </div>
       </div>

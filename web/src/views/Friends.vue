@@ -20,6 +20,7 @@ const {
   loading,
   friendLands,
   friendLandsLoading,
+  friendCareers,
   blacklist,
   interactRecords,
   interactLoading,
@@ -30,6 +31,7 @@ const {
   knownFriendSettingsLoading,
   knownFriendSettingsSaving,
 } = storeToRefs(friendStore)
+friendStore.activateAccount(currentAccountId.value)
 const { status, loading: statusLoading, realtimeConnected } = storeToRefs(statusStore)
 
 const isQqAccount = computed(() => {
@@ -234,7 +236,8 @@ onMounted(() => {
   loadData()
 })
 
-watch(currentAccountId, () => {
+watch(currentAccountId, (accountId) => {
+  friendStore.activateAccount(accountId)
   expandedFriends.value.clear()
   loadData()
 })
@@ -305,6 +308,19 @@ async function handleToggleBlacklist(friend: any, e: Event) {
   if (!currentAccountId.value)
     return
   await friendStore.toggleBlacklist(currentAccountId.value, Number(friend.gid))
+}
+
+function handleDeleteFriend(friend: any, e: Event) {
+  e.stopPropagation()
+  if (!currentAccountId.value)
+    return
+  const accountId = currentAccountId.value
+  const friendId = String(friend.gid)
+  confirmAction(`确定删除好友 ${friend.name || friendId} 吗？此操作会同步到游戏好友关系。`, async () => {
+    await friendStore.deleteFriend(accountId, friendId)
+    if (currentAccountId.value === accountId)
+      toast.success('好友已删除')
+  })
 }
 
 function getFriendStatusText(friend: any) {
@@ -808,6 +824,12 @@ async function handleBatchAddKnownFriendGids() {
                 >
                   移出同步列表
                 </button>
+                <button
+                  class="rounded bg-rose-100 px-3 py-2 text-sm text-rose-700 transition hover:bg-rose-200"
+                  @click="handleDeleteFriend(friend, $event)"
+                >
+                  删除好友
+                </button>
               </div>
             </div>
 
@@ -818,12 +840,19 @@ async function handleBatchAddKnownFriendGids() {
               <div v-else-if="!friendLands[friend.gid] || friendLands[friend.gid]?.length === 0" class="py-4 text-center text-gray-500">
                 无土地数据
               </div>
-              <div v-else class="grid grid-cols-2 gap-2 lg:grid-cols-8 md:grid-cols-5 sm:grid-cols-4">
-                <LandCard
-                  v-for="land in friendLands[friend.gid]"
-                  :key="land.id"
-                  :land="land"
-                />
+              <div v-else class="space-y-3">
+                <div v-if="friendCareers[friend.gid]" class="flex flex-wrap gap-3 text-xs text-gray-600 dark:text-gray-300">
+                  <span>生涯收获 {{ friendCareers[friend.gid].harvest }}</span>
+                  <span>生涯偷取 {{ friendCareers[friend.gid].steal }}</span>
+                  <span>比例 {{ friendCareers[friend.gid].steal > 0 ? `${(friendCareers[friend.gid].harvest / friendCareers[friend.gid].steal).toFixed(1)}:1` : '无偷取' }}</span>
+                </div>
+                <div class="grid grid-cols-2 gap-2 lg:grid-cols-8 md:grid-cols-5 sm:grid-cols-4">
+                  <LandCard
+                    v-for="land in friendLands[friend.gid]"
+                    :key="land.id"
+                    :land="land"
+                  />
+                </div>
               </div>
             </div>
           </div>

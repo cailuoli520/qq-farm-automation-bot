@@ -19,6 +19,7 @@ export const useFriendStore = defineStore('friend', () => {
   const loading = ref(false)
   const friendLands = ref<Record<string, any[]>>({})
   const friendLandsLoading = ref<Record<string, boolean>>({})
+  const friendCareers = ref<Record<string, any>>({})
   const blacklist = ref<BlacklistItem[]>([])
   const interactRecords = ref<any[]>([])
   const interactLoading = ref(false)
@@ -29,6 +30,21 @@ export const useFriendStore = defineStore('friend', () => {
   const friendsListCacheTtlSec = ref(60)
   const knownFriendSettingsLoading = ref(false)
   const knownFriendSettingsSaving = ref(false)
+  let activeAccountId = ''
+  let friendsRequestVersion = 0
+
+  function activateAccount(accountId: string) {
+    const nextAccountId = String(accountId || '').trim()
+    if (activeAccountId === nextAccountId)
+      return
+    activeAccountId = nextAccountId
+    friendsRequestVersion += 1
+    friends.value = []
+    friendLands.value = {}
+    friendLandsLoading.value = {}
+    friendCareers.value = {}
+    loading.value = false
+  }
 
   function buildPlantSummaryFromDetail(lands: any[], summary: any) {
     let stealNum = 0
@@ -80,20 +96,24 @@ export const useFriendStore = defineStore('friend', () => {
   }
 
   async function fetchFriends(accountId: string, forceSync = false) {
-    if (!accountId)
+    const requestedAccountId = String(accountId || '').trim()
+    if (!requestedAccountId)
       return
+    activateAccount(requestedAccountId)
+    const requestVersion = ++friendsRequestVersion
     loading.value = true
     try {
       const res = await api.get('/api/friends', {
-        headers: { 'x-account-id': accountId },
+        headers: { 'x-account-id': requestedAccountId },
         params: forceSync ? { forceSync: 'true' } : {},
       })
-      if (res.data.ok) {
+      if (activeAccountId === requestedAccountId && requestVersion === friendsRequestVersion && res.data.ok) {
         friends.value = res.data.data || []
       }
     }
     finally {
-      loading.value = false
+      if (activeAccountId === requestedAccountId && requestVersion === friendsRequestVersion)
+        loading.value = false
     }
   }
   async function fetchInteractRecords(accountId: string) {
@@ -159,12 +179,26 @@ export const useFriendStore = defineStore('friend', () => {
         const lands = res.data.data.lands || []
         const summary = res.data.data.summary || null
         friendLands.value[friendId] = lands
+        friendCareers.value[friendId] = res.data.data.career || null
         syncFriendPlantSummary(friendId, lands, summary)
       }
     }
     finally {
       friendLandsLoading.value[friendId] = false
     }
+  }
+
+  async function deleteFriend(accountId: string, friendId: string) {
+    if (!accountId || !friendId)
+      return
+    await api.delete(`/api/friend/${friendId}`, {
+      headers: { 'x-account-id': accountId },
+    })
+    if (activeAccountId !== accountId)
+      return
+    friends.value = friends.value.filter(friend => String(friend?.gid || '') !== String(friendId))
+    delete friendLands.value[friendId]
+    delete friendCareers.value[friendId]
   }
 
   async function operate(accountId: string, friendId: string, opType: string) {
@@ -290,6 +324,7 @@ export const useFriendStore = defineStore('friend', () => {
     loading,
     friendLands,
     friendLandsLoading,
+    friendCareers,
     blacklist,
     interactRecords,
     interactLoading,
@@ -299,12 +334,14 @@ export const useFriendStore = defineStore('friend', () => {
     friendsListCacheTtlSec,
     knownFriendSettingsLoading,
     knownFriendSettingsSaving,
+    activateAccount,
     fetchFriends,
     fetchBlacklist,
     toggleBlacklist,
     fetchInteractRecords,
     fetchFriendLands,
     operate,
+    deleteFriend,
     fetchKnownFriendSettings,
     saveKnownFriendSettings,
     removeKnownFriendGid,

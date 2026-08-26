@@ -238,6 +238,7 @@ const localStrategySettings = ref({
   plantingStrategy: 'max_exp',
   preferredSeedId: 0,
   bagSeedPriority: [] as number[],
+  bagSeedLandTypes: {} as Record<string, string[]>,
   bagSeedFallbackStrategy: 'level',
   stealDelaySeconds: 0,
   plantOrderRandom: false,
@@ -264,6 +265,15 @@ const BAG_FALLBACK_STRATEGY_OPTIONS = [
   { label: '最大净利润/时', value: 'max_profit' },
   { label: '最大普通肥净利润/时', value: 'max_fert_profit' },
   { label: '优先种植种子', value: 'preferred' },
+]
+
+const allLandTypes = ['purple-gold', 'gold', 'black', 'red', 'normal']
+const landTypeOptions = [
+  { label: '紫金土地', value: 'purple-gold' },
+  { label: '金土地', value: 'gold' },
+  { label: '黑土地', value: 'black' },
+  { label: '红土地', value: 'red' },
+  { label: '普通土地', value: 'normal' },
 ]
 
 interface BagSeedItem {
@@ -321,7 +331,7 @@ async function fetchBagSeeds(accountId: string) {
     if (requestSequence !== bagSeedsRequestSequence || accountId !== currentAccountId.value)
       return
     if (res.data.ok) {
-      bagSeeds.value = (res.data.data || []).filter((s: BagSeedItem) => s.plantSize === 1)
+      bagSeeds.value = (res.data.data || []).filter((s: BagSeedItem) => s.plantSize >= 1)
       bagSeedsLoadedAccountId = accountId
     }
     else {
@@ -347,8 +357,57 @@ function resetBagSeedPriority() {
   localStrategySettings.value.bagSeedPriority = []
 }
 
+function bagSeedLandTypes(seedId: number) {
+  return localStrategySettings.value.bagSeedLandTypes[String(seedId)] || []
+}
+
+function setBagSeedLandType(seedId: number, landType: string, checked: boolean) {
+  const key = String(seedId)
+  const current = new Set(bagSeedLandTypes(seedId))
+  if (checked)
+    current.add(landType)
+  else
+    current.delete(landType)
+  const next = allLandTypes.filter(type => current.has(type))
+  if (next.length === 0 || next.length === allLandTypes.length)
+    delete localStrategySettings.value.bagSeedLandTypes[key]
+  else
+    localStrategySettings.value.bagSeedLandTypes[key] = next
+}
+
+function bagSeedLandTypeLabel(seedId: number) {
+  const selected = bagSeedLandTypes(seedId)
+  if (selected.length === 0)
+    return '不限制'
+  return `仅种 ${landTypeOptions.filter(item => selected.includes(item.value)).map(item => item.label).join('、')}`
+}
+
+function mergeVisibleBagSeedOrder(visibleOrder: number[]) {
+  const visibleSet = new Set(bagSeeds.value.map(seed => seed.seedId))
+  const normalizedVisible = visibleOrder.filter((seedId, index) => visibleSet.has(seedId) && visibleOrder.indexOf(seedId) === index)
+  const existing = [...new Set((localStrategySettings.value.bagSeedPriority || []).map(Number).filter(seedId => seedId > 0))]
+  const merged: number[] = []
+  let visibleIndex = 0
+  for (const seedId of existing) {
+    if (visibleSet.has(seedId)) {
+      const replacement = normalizedVisible[visibleIndex++]
+      if (replacement != null && !merged.includes(replacement))
+        merged.push(replacement)
+    }
+    else if (!merged.includes(seedId)) {
+      merged.push(seedId)
+    }
+  }
+  while (visibleIndex < normalizedVisible.length) {
+    const seedId = normalizedVisible[visibleIndex++]!
+    if (!merged.includes(seedId))
+      merged.push(seedId)
+  }
+  localStrategySettings.value.bagSeedPriority = merged
+}
+
 function moveBagSeed(seedId: number, direction: -1 | 1) {
-  const nextOrder = [...(localStrategySettings.value.bagSeedPriority || [])]
+  const nextOrder = sortedBagSeeds.value.map(seed => seed.seedId)
   const index = nextOrder.indexOf(seedId)
   const targetIndex = index + direction
   if (index < 0 || targetIndex < 0 || targetIndex >= nextOrder.length)
@@ -357,7 +416,7 @@ function moveBagSeed(seedId: number, direction: -1 | 1) {
   const temp = nextOrder[index]!
   nextOrder[index] = nextOrder[targetIndex]!
   nextOrder[targetIndex] = temp
-  localStrategySettings.value.bagSeedPriority = nextOrder
+  mergeVisibleBagSeedOrder(nextOrder)
 }
 
 function startBagSeedDrag(seedId: number, event: DragEvent) {
@@ -384,27 +443,16 @@ function dropBagSeed(seedId: number, event: DragEvent) {
     return
   }
 
-  const nextOrder = [...(localStrategySettings.value.bagSeedPriority || [])]
+  const nextOrder = sortedBagSeeds.value.map(seed => seed.seedId)
   const sourceIndex = nextOrder.indexOf(sourceSeedId)
   const targetIndex = nextOrder.indexOf(seedId)
 
-  if (sourceIndex < 0 && targetIndex < 0) {
-    nextOrder.push(sourceSeedId)
-  }
-  else if (sourceIndex < 0) {
-    nextOrder.splice(targetIndex, 0, sourceSeedId)
-  }
-  else if (targetIndex < 0) {
-    // 目标不在列表中，不做处理
-  }
-  else {
-    const temp = nextOrder[sourceIndex]
-    nextOrder.splice(sourceIndex, 1)
+  if (sourceIndex >= 0 && targetIndex >= 0) {
+    const [moved] = nextOrder.splice(sourceIndex, 1)
     const newTargetIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
-    nextOrder.splice(newTargetIndex, 0, temp!)
+    nextOrder.splice(newTargetIndex, 0, moved!)
+    mergeVisibleBagSeedOrder(nextOrder)
   }
-
-  localStrategySettings.value.bagSeedPriority = nextOrder
   draggingBagSeedId.value = null
 }
 
@@ -526,6 +574,7 @@ function syncLocalStrategySettings() {
       plantingStrategy: settings.value.plantingStrategy,
       preferredSeedId: settings.value.preferredSeedId,
       bagSeedPriority: settings.value.bagSeedPriority ?? [],
+      bagSeedLandTypes: settings.value.bagSeedLandTypes ?? {},
       bagSeedFallbackStrategy: settings.value.bagSeedFallbackStrategy ?? 'level',
       stealDelaySeconds: settings.value.stealDelaySeconds ?? 0,
       plantOrderRandom: !!settings.value.plantOrderRandom,
@@ -579,14 +628,9 @@ watch(currentAccountId, async () => {
 // ==================== 自动控制 ====================
 const automationSaving = ref(false)
 
-const allFertilizerLandTypes = ['gold', 'black', 'red', 'normal']
+const allFertilizerLandTypes = allLandTypes
 
-const fertilizerLandTypeOptions = [
-  { label: '金土地', value: 'gold' },
-  { label: '黑土地', value: 'black' },
-  { label: '红土地', value: 'red' },
-  { label: '普通土地', value: 'normal' },
-]
+const fertilizerLandTypeOptions = landTypeOptions
 
 function normalizeFertilizerLandTypes(input: unknown) {
   const source = Array.isArray(input) ? input : allFertilizerLandTypes
@@ -615,12 +659,14 @@ const localAutomationSettings = ref({
     mystery_shop_arrival_notify: false,
     mystery_shop_purchase_notify: false,
     friend: false,
+    friend_auto_accept: true,
     farm_push: false,
     land_upgrade: false,
     friend_steal: false,
     friend_help: false,
     friend_bad: false,
     friend_help_exp_limit: false,
+    friend_help_protect_dog_ignore_exp_limit: true,
     fertilizer_gift: false,
     fertilizer_buy_organic: false,
     fertilizer_buy_normal: false,
@@ -629,6 +675,7 @@ const localAutomationSettings = ref({
     fertilizer_multi_season: false,
     fertilizer_land_types: [...allFertilizerLandTypes],
     fertilizer_smart_seconds: 300,
+    show_manual_fertilizer: true,
   },
   autoRelogin: { enabled: false, delayMinutes: 15, maxPerDay: 3, kickWindowMinutes: 10, loginFailWindowSec: 60 },
   fertilizerBuyOrganicCount: 10,
@@ -636,6 +683,11 @@ const localAutomationSettings = ref({
   fertilizerBuyNormalCount: 10,
   fertilizerBuyNormalThresholdHours: 10,
   fertilizerBuyCheckIntervalMinutes: 30,
+  autoAcceptFriendMinLevel: 0,
+  autoAcceptRequireOwnLevel: false,
+  autoAcceptHarvestStealEnabled: true,
+  autoAcceptHarvestStealHarvest: 8,
+  autoAcceptHarvestStealSteal: 1,
 })
 
 const fertilizerOptions = [
@@ -661,12 +713,14 @@ function syncLocalAutomationSettings() {
         mystery_shop_arrival_notify: false,
         mystery_shop_purchase_notify: false,
         friend: false,
+        friend_auto_accept: true,
         farm_push: false,
         land_upgrade: false,
         friend_steal: false,
         friend_help: false,
         friend_bad: false,
         friend_help_exp_limit: false,
+        friend_help_protect_dog_ignore_exp_limit: true,
         fertilizer_gift: false,
         fertilizer_buy_organic: false,
         fertilizer_buy_normal: false,
@@ -675,6 +729,7 @@ function syncLocalAutomationSettings() {
         fertilizer_multi_season: false,
         fertilizer_land_types: [...allFertilizerLandTypes],
         fertilizer_smart_seconds: 300,
+        show_manual_fertilizer: true,
       }
     }
     else {
@@ -690,12 +745,14 @@ function syncLocalAutomationSettings() {
         mystery_shop_arrival_notify: false,
         mystery_shop_purchase_notify: false,
         friend: false,
+        friend_auto_accept: true,
         farm_push: false,
         land_upgrade: false,
         friend_steal: false,
         friend_help: false,
         friend_bad: false,
         friend_help_exp_limit: false,
+        friend_help_protect_dog_ignore_exp_limit: true,
         fertilizer_gift: false,
         fertilizer_buy_organic: false,
         fertilizer_buy_normal: false,
@@ -704,6 +761,7 @@ function syncLocalAutomationSettings() {
         fertilizer_multi_season: false,
         fertilizer_land_types: [...allFertilizerLandTypes],
         fertilizer_smart_seconds: 300,
+        show_manual_fertilizer: true,
       }
       localAutomationSettings.value.automation = {
         ...defaults,
@@ -727,6 +785,11 @@ function syncLocalAutomationSettings() {
     localAutomationSettings.value.fertilizerBuyNormalCount = settings.value.fertilizerBuyNormalCount ?? 10
     localAutomationSettings.value.fertilizerBuyNormalThresholdHours = settings.value.fertilizerBuyNormalThresholdHours ?? 10
     localAutomationSettings.value.fertilizerBuyCheckIntervalMinutes = settings.value.fertilizerBuyCheckIntervalMinutes ?? 30
+    localAutomationSettings.value.autoAcceptFriendMinLevel = settings.value.autoAcceptFriendMinLevel ?? 0
+    localAutomationSettings.value.autoAcceptRequireOwnLevel = settings.value.autoAcceptRequireOwnLevel ?? false
+    localAutomationSettings.value.autoAcceptHarvestStealEnabled = settings.value.autoAcceptHarvestStealEnabled ?? true
+    localAutomationSettings.value.autoAcceptHarvestStealHarvest = settings.value.autoAcceptHarvestStealHarvest ?? 8
+    localAutomationSettings.value.autoAcceptHarvestStealSteal = settings.value.autoAcceptHarvestStealSteal ?? 1
   }
 }
 
@@ -744,6 +807,11 @@ async function saveAutomationSettings() {
       fertilizerBuyNormalCount: localAutomationSettings.value.fertilizerBuyNormalCount,
       fertilizerBuyNormalThresholdHours: localAutomationSettings.value.fertilizerBuyNormalThresholdHours,
       fertilizerBuyCheckIntervalMinutes: localAutomationSettings.value.fertilizerBuyCheckIntervalMinutes,
+      autoAcceptFriendMinLevel: localAutomationSettings.value.autoAcceptFriendMinLevel,
+      autoAcceptRequireOwnLevel: localAutomationSettings.value.autoAcceptRequireOwnLevel,
+      autoAcceptHarvestStealEnabled: localAutomationSettings.value.autoAcceptHarvestStealEnabled,
+      autoAcceptHarvestStealHarvest: localAutomationSettings.value.autoAcceptHarvestStealHarvest,
+      autoAcceptHarvestStealSteal: localAutomationSettings.value.autoAcceptHarvestStealSteal,
     }
     const res = await settingStore.saveSettings(currentAccountId.value, fullSettings)
     if (res.ok) {
@@ -1226,7 +1294,7 @@ async function handleTestOffline() {
                       背包种子优先顺序
                     </div>
                     <p class="mt-1 text-xs text-amber-700/90 dark:text-amber-300/90">
-                      先按下方顺序消耗背包中的 1x1 种子；背包种子不足时，再按"第二优先策略"补种。
+                      先按下方顺序消耗背包中的 1x1 / 2x2 种子；背包种子不足时，再按"第二优先策略"补种。
                     </p>
                   </div>
                   <button
@@ -1243,13 +1311,13 @@ async function handleTestOffline() {
                   {{ bagSeedsError }}
                 </div>
                 <div v-else-if="bagSeeds.length === 0" class="py-4 text-center text-sm text-amber-700 dark:text-amber-300">
-                  背包中暂无 1x1 种子
+                  背包中暂无 1x1 / 2x2 种子
                 </div>
                 <div v-else class="grid gap-2 lg:grid-cols-3 sm:grid-cols-2">
                   <div
                     v-for="(seed, index) in sortedBagSeeds"
                     :key="seed.seedId"
-                    class="flex items-center gap-2 border border-amber-200 rounded-lg bg-white p-2 dark:border-amber-700/50 dark:bg-gray-800"
+                    class="flex flex-wrap items-center gap-2 border border-amber-200 rounded-lg bg-white p-2 dark:border-amber-700/50 dark:bg-gray-800"
                     draggable="true"
                     @dragstart="startBagSeedDrag(seed.seedId, $event)"
                     @dragover.prevent="dragOverBagSeed(seed.seedId, $event)"
@@ -1283,6 +1351,28 @@ async function handleTestOffline() {
                         <div class="i-carbon-arrow-down text-sm" />
                       </button>
                     </div>
+                    <details class="basis-full border-t border-amber-100 pt-1 dark:border-amber-800/40">
+                      <summary class="cursor-pointer text-xs text-gray-500 dark:text-gray-400">
+                        土地：{{ bagSeedLandTypeLabel(seed.seedId) }}
+                      </summary>
+                      <div class="grid grid-cols-2 mt-2 gap-1">
+                        <label
+                          v-for="option in landTypeOptions"
+                          :key="option.value"
+                          class="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-300"
+                        >
+                          <input
+                            type="checkbox"
+                            :checked="bagSeedLandTypes(seed.seedId).includes(option.value)"
+                            @change="setBagSeedLandType(seed.seedId, option.value, ($event.target as HTMLInputElement).checked)"
+                          >
+                          <span>{{ option.label }}</span>
+                        </label>
+                      </div>
+                      <p class="mt-1 text-[11px] text-gray-400">
+                        不勾或勾满即为不限制。
+                      </p>
+                    </details>
                   </div>
                 </div>
               </div>
@@ -1420,12 +1510,14 @@ async function handleTestOffline() {
               <BaseSwitch v-model="localAutomationSettings.automation.sell" label="自动卖果实" />
               <BaseSwitch v-model="localAutomationSettings.automation.mystery_shop_buy" label="自动购买神秘商品" />
               <BaseSwitch v-model="localAutomationSettings.automation.friend" label="自动好友互动" />
+              <BaseSwitch v-model="localAutomationSettings.automation.friend_auto_accept" label="自动通过好友申请" />
               <BaseSwitch v-model="localAutomationSettings.automation.farm_push" label="推送触发巡田" />
               <BaseSwitch v-model="localAutomationSettings.automation.land_upgrade" label="自动升级土地" />
               <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_gift" label="自动填充化肥" />
               <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_buy_organic" label="自动购买有机化肥" />
               <BaseSwitch v-model="localAutomationSettings.automation.fertilizer_buy_normal" label="自动购买无机化肥" />
               <BaseSwitch v-model="localAutomationSettings.automation.skip_own_weed_bug" label="不除自己草虫" />
+              <BaseSwitch v-model="localAutomationSettings.automation.show_manual_fertilizer" label="显示手动施肥按钮" />
               <BaseSwitch v-model="localAutomationSettings.autoRelogin.enabled" label="启用自动重登" />
             </div>
 
@@ -1558,6 +1650,52 @@ async function handleTestOffline() {
               <BaseSwitch v-model="localAutomationSettings.automation.friend_help" label="自动帮忙" />
               <BaseSwitch v-model="localAutomationSettings.automation.friend_bad" label="自动捣乱" />
               <BaseSwitch v-model="localAutomationSettings.automation.friend_help_exp_limit" label="经验满不帮忙" />
+              <BaseSwitch
+                v-model="localAutomationSettings.automation.friend_help_protect_dog_ignore_exp_limit"
+                label="护主犬经验满仍帮忙"
+              />
+            </div>
+
+            <div v-if="localAutomationSettings.automation.friend_auto_accept" class="rounded bg-sky-50 p-3 text-sm space-y-3 dark:bg-sky-900/20">
+              <div class="text-sky-700 font-medium dark:text-sky-300">
+                好友申请过滤
+              </div>
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <BaseInput
+                  v-model.number="localAutomationSettings.autoAcceptFriendMinLevel"
+                  label="最低等级"
+                  type="number"
+                  min="0"
+                  max="200"
+                />
+                <BaseSwitch
+                  v-model="localAutomationSettings.autoAcceptRequireOwnLevel"
+                  label="申请人等级不低于自己"
+                />
+              </div>
+              <BaseSwitch
+                v-model="localAutomationSettings.autoAcceptHarvestStealEnabled"
+                label="按收获/偷取比过滤"
+              />
+              <div v-if="localAutomationSettings.autoAcceptHarvestStealEnabled" class="grid grid-cols-2 gap-3">
+                <BaseInput
+                  v-model.number="localAutomationSettings.autoAcceptHarvestStealHarvest"
+                  label="收获份数"
+                  type="number"
+                  min="1"
+                  max="9999"
+                />
+                <BaseInput
+                  v-model.number="localAutomationSettings.autoAcceptHarvestStealSteal"
+                  label="允许偷取份数"
+                  type="number"
+                  min="1"
+                  max="9999"
+                />
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400">
+                不满足条件的申请会自动拒绝；生涯数据暂时获取失败时会保留待处理，避免误拒绝。
+              </p>
             </div>
 
             <div class="space-y-3">

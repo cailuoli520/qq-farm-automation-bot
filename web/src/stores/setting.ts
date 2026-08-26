@@ -7,6 +7,9 @@ export interface AutomationConfig {
   farm_push?: boolean
   land_upgrade?: boolean
   friend?: boolean
+  friend_auto_accept?: boolean
+  friend_help_exp_limit?: boolean
+  friend_help_protect_dog_ignore_exp_limit?: boolean
   task?: boolean
   sell?: boolean
   mystery_shop_buy?: boolean
@@ -23,6 +26,7 @@ export interface AutomationConfig {
   friend_steal?: boolean
   friend_help?: boolean
   friend_bad?: boolean
+  show_manual_fertilizer?: boolean
 }
 
 export interface IntervalsConfig {
@@ -70,7 +74,13 @@ export interface SettingsState {
   plantingStrategy: string
   preferredSeedId: number
   bagSeedPriority: number[]
+  bagSeedLandTypes: Record<string, string[]>
   bagSeedFallbackStrategy: string
+  autoAcceptFriendMinLevel: number
+  autoAcceptRequireOwnLevel: boolean
+  autoAcceptHarvestStealEnabled: boolean
+  autoAcceptHarvestStealHarvest: number
+  autoAcceptHarvestStealSteal: number
   intervals: IntervalsConfig
   friendQuietHours: FriendQuietHoursConfig
   autoRelogin: AutoReloginConfig
@@ -92,7 +102,13 @@ export const useSettingStore = defineStore('setting', () => {
     plantingStrategy: 'max_exp',
     preferredSeedId: 0,
     bagSeedPriority: [],
+    bagSeedLandTypes: {},
     bagSeedFallbackStrategy: 'level',
+    autoAcceptFriendMinLevel: 0,
+    autoAcceptRequireOwnLevel: false,
+    autoAcceptHarvestStealEnabled: true,
+    autoAcceptHarvestStealHarvest: 8,
+    autoAcceptHarvestStealSteal: 1,
     intervals: {},
     friendQuietHours: { enabled: false, start: '23:00', end: '07:00' },
     autoRelogin: { enabled: false, delayMinutes: 15, maxPerDay: 3, kickWindowMinutes: 10, loginFailWindowSec: 60 },
@@ -153,7 +169,13 @@ export const useSettingStore = defineStore('setting', () => {
         settings.value.fertilizerBuyNormalThresholdHours = d.fertilizerBuyNormalThresholdHours ?? 10
         settings.value.fertilizerBuyCheckIntervalMinutes = d.fertilizerBuyCheckIntervalMinutes ?? 30
         settings.value.bagSeedPriority = d.bagSeedPriority ?? []
+        settings.value.bagSeedLandTypes = d.bagSeedLandTypes ?? {}
         settings.value.bagSeedFallbackStrategy = d.bagSeedFallbackStrategy ?? 'level'
+        settings.value.autoAcceptFriendMinLevel = d.autoAcceptFriendMinLevel ?? 0
+        settings.value.autoAcceptRequireOwnLevel = d.autoAcceptRequireOwnLevel ?? false
+        settings.value.autoAcceptHarvestStealEnabled = d.autoAcceptHarvestStealEnabled ?? true
+        settings.value.autoAcceptHarvestStealHarvest = d.autoAcceptHarvestStealHarvest ?? 8
+        settings.value.autoAcceptHarvestStealSteal = d.autoAcceptHarvestStealSteal ?? 1
       }
     }
     finally {
@@ -170,7 +192,13 @@ export const useSettingStore = defineStore('setting', () => {
         plantingStrategy: newSettings.plantingStrategy,
         preferredSeedId: newSettings.preferredSeedId,
         bagSeedPriority: newSettings.bagSeedPriority ?? [],
+        bagSeedLandTypes: newSettings.bagSeedLandTypes ?? {},
         bagSeedFallbackStrategy: newSettings.bagSeedFallbackStrategy ?? 'level',
+        autoAcceptFriendMinLevel: newSettings.autoAcceptFriendMinLevel ?? 0,
+        autoAcceptRequireOwnLevel: newSettings.autoAcceptRequireOwnLevel ?? false,
+        autoAcceptHarvestStealEnabled: newSettings.autoAcceptHarvestStealEnabled ?? true,
+        autoAcceptHarvestStealHarvest: newSettings.autoAcceptHarvestStealHarvest ?? 8,
+        autoAcceptHarvestStealSteal: newSettings.autoAcceptHarvestStealSteal ?? 1,
         intervals: newSettings.intervals,
         friendQuietHours: newSettings.friendQuietHours,
         autoRelogin: newSettings.autoRelogin,
