@@ -4,6 +4,7 @@ import { defineStore } from 'pinia'
 import { io } from 'socket.io-client'
 import { ref } from 'vue'
 import api from '@/api'
+import { resolveLogLevel } from '@/features/logs/filter-options'
 
 // Define interfaces for better type checking
 interface DailyGift {
@@ -34,10 +35,18 @@ export const useStatusStore = defineStore('status', () => {
   const realtimeConnected = ref(false)
   const realtimeLogsEnabled = ref(true)
   const currentRealtimeAccountId = ref('')
+  const observedLogModules = ref<string[]>([])
+  const observedLogEvents = ref<string[]>([])
+  const observedLogEventModules = ref<Record<string, string[]>>({})
+  const observedDevLogModules = ref<string[]>([])
+  const observedDevLogEvents = ref<string[]>([])
+  const observedDevLogEventModules = ref<Record<string, string[]>>({})
   const tokenRef = useStorage('admin_token', '')
 
   let socket: Socket | null = null
   let diamondRequestSequence = 0
+  let logsRequestSequence = 0
+  let accountLogsRequestSequence = 0
 
   function normalizeStatusPayload(input: any) {
     return (input && typeof input === 'object') ? { ...input } : {}
@@ -48,13 +57,45 @@ export const useStatusStore = defineStore('status', () => {
     const ts = Number(entry.ts) || Date.parse(String(entry.time || '')) || Date.now()
     return {
       ...entry,
+      level: resolveLogLevel(entry),
       ts,
       time: entry.time || new Date(ts).toISOString().replace('T', ' ').slice(0, 19),
     }
   }
 
+  function observeLogEntry(entry: any) {
+    const moduleName = String(entry?.meta?.module || '').trim()
+    const eventName = String(entry?.meta?.event || '').trim()
+    const isDev = entry?.meta?.dev === true
+    const modules = isDev ? observedDevLogModules : observedLogModules
+    const events = isDev ? observedDevLogEvents : observedLogEvents
+    const eventModules = isDev ? observedDevLogEventModules : observedLogEventModules
+    if (moduleName && !modules.value.includes(moduleName))
+      modules.value = [...modules.value, moduleName]
+    if (eventName && !events.value.includes(eventName))
+      events.value = [...events.value, eventName]
+    if (eventName && moduleName) {
+      const knownModules = eventModules.value[eventName] || []
+      if (!knownModules.includes(moduleName)) {
+        eventModules.value = {
+          ...eventModules.value,
+          [eventName]: [...knownModules, moduleName],
+        }
+      }
+    }
+  }
+
+  function belongsToCurrentRealtimeAccount(input: any) {
+    const entry = (input && typeof input === 'object') ? input : {}
+    const accountId = String(entry.accountId || '')
+    return !currentRealtimeAccountId.value || !accountId || accountId === currentRealtimeAccountId.value
+  }
+
   function pushRealtimeLog(entry: any) {
+    if (!belongsToCurrentRealtimeAccount(entry))
+      return
     const next = normalizeLogEntry(entry)
+    observeLogEntry(next)
     logs.value.push(next)
     if (logs.value.length > 1000)
       logs.value = logs.value.slice(-1000)
@@ -62,6 +103,9 @@ export const useStatusStore = defineStore('status', () => {
 
   function pushRealtimeAccountLog(entry: any) {
     const next = (entry && typeof entry === 'object') ? entry : {}
+    const accountId = String(next.accountId || next.id || '')
+    if (currentRealtimeAccountId.value && accountId !== currentRealtimeAccountId.value)
+      return
     accountLogs.value.push(next)
     if (accountLogs.value.length > 300)
       accountLogs.value = accountLogs.value.slice(-300)
@@ -89,15 +133,31 @@ export const useStatusStore = defineStore('status', () => {
   }
 
   function handleRealtimeLogsSnapshot(payload: any) {
+    if (!realtimeLogsEnabled.value)
+      return
     const body = (payload && typeof payload === 'object') ? payload : {}
+    const accountId = String(body.accountId || '')
+    if (currentRealtimeAccountId.value && accountId && accountId !== currentRealtimeAccountId.value)
+      return
     const list = Array.isArray(body.logs) ? body.logs : []
-    logs.value = list.map((item: any) => normalizeLogEntry(item))
+    logs.value = list
+      .filter((item: any) => belongsToCurrentRealtimeAccount(item))
+      .map((item: any) => {
+        const next = normalizeLogEntry(item)
+        observeLogEntry(next)
+        return next
+      })
   }
 
   function handleRealtimeAccountLogsSnapshot(payload: any) {
     const body = (payload && typeof payload === 'object') ? payload : {}
+    const accountId = String(body.accountId || '')
+    if (currentRealtimeAccountId.value && accountId && accountId !== currentRealtimeAccountId.value)
+      return
     const list = Array.isArray(body.logs) ? body.logs : []
-    accountLogs.value = list
+    accountLogs.value = currentRealtimeAccountId.value
+      ? list.filter((item: any) => String(item?.accountId || item?.id || '') === currentRealtimeAccountId.value)
+      : list
   }
 
   function ensureRealtimeSocket() {
@@ -141,7 +201,20 @@ export const useStatusStore = defineStore('status', () => {
   }
 
   function connectRealtime(accountId: string) {
-    currentRealtimeAccountId.value = String(accountId || '').trim()
+    const nextAccountId = String(accountId || '').trim()
+    if (nextAccountId !== currentRealtimeAccountId.value) {
+      logsRequestSequence += 1
+      accountLogsRequestSequence += 1
+      logs.value = []
+      accountLogs.value = []
+      observedLogModules.value = []
+      observedLogEvents.value = []
+      observedLogEventModules.value = {}
+      observedDevLogModules.value = []
+      observedDevLogEvents.value = []
+      observedDevLogEventModules.value = {}
+    }
+    currentRealtimeAccountId.value = nextAccountId
     if (!tokenRef.value)
       return
 
@@ -201,7 +274,9 @@ export const useStatusStore = defineStore('status', () => {
 
   async function fetchLogs(accountId: string, options: any = {}) {
     if (!accountId && options.accountId !== 'all')
-      return
+      return false
+    const requestedAccountId = String(accountId || options.accountId || '').trim()
+    const sequence = ++logsRequestSequence
     const params: any = { limit: 100, ...options }
     const headers: any = {}
     if (accountId && accountId !== 'all') {
@@ -213,13 +288,25 @@ export const useStatusStore = defineStore('status', () => {
 
     try {
       const { data } = await api.get('/api/logs', { headers, params })
-      if (data.ok) {
-        logs.value = data.data
+      if (sequence !== logsRequestSequence)
+        return false
+      if (requestedAccountId !== 'all' && currentRealtimeAccountId.value && requestedAccountId !== currentRealtimeAccountId.value)
+        return false
+      if (data.ok && Array.isArray(data.data)) {
+        logs.value = data.data.map((item: any) => {
+          const next = normalizeLogEntry(item)
+          observeLogEntry(next)
+          return next
+        })
         error.value = ''
+        return true
       }
+      return false
     }
     catch (e: any) {
-      console.error(e)
+      if (sequence === logsRequestSequence)
+        console.error(e)
+      return false
     }
   }
 
@@ -259,20 +346,41 @@ export const useStatusStore = defineStore('status', () => {
     }
   }
 
-  async function fetchAccountLogs(limit = 100) {
+  async function fetchAccountLogs(accountId = currentRealtimeAccountId.value, limit = 300) {
+    const requestedAccountId = String(accountId || '').trim()
+    const sequence = ++accountLogsRequestSequence
     try {
-      const res = await api.get(`/api/account-logs?limit=${Math.max(1, Number(limit) || 100)}`)
+      const res = await api.get('/api/account-logs', {
+        headers: requestedAccountId ? { 'x-account-id': requestedAccountId } : {},
+        params: { limit: Math.max(1, Number(limit) || 100), accountId: requestedAccountId || undefined },
+      })
+      if (sequence !== accountLogsRequestSequence)
+        return false
+      if (requestedAccountId && currentRealtimeAccountId.value && requestedAccountId !== currentRealtimeAccountId.value)
+        return false
       if (Array.isArray(res.data)) {
         accountLogs.value = res.data
+        return true
       }
+      return false
     }
     catch (e) {
-      console.error(e)
+      if (sequence === accountLogsRequestSequence)
+        console.error(e)
+      return false
     }
   }
 
   function setRealtimeLogsEnabled(enabled: boolean) {
     realtimeLogsEnabled.value = !!enabled
+    if (realtimeLogsEnabled.value && socket?.connected)
+      socket.emit('subscribe', { accountId: currentRealtimeAccountId.value || 'all' })
+  }
+
+  function invalidateLogRequests(clear = false) {
+    logsRequestSequence += 1
+    if (clear)
+      logs.value = []
   }
 
   return {
@@ -285,12 +393,19 @@ export const useStatusStore = defineStore('status', () => {
     error,
     realtimeConnected,
     realtimeLogsEnabled,
+    observedLogModules,
+    observedLogEvents,
+    observedLogEventModules,
+    observedDevLogModules,
+    observedDevLogEvents,
+    observedDevLogEventModules,
     fetchStatus,
     fetchLogs,
     fetchAccountLogs,
     fetchDailyGifts,
     fetchDiamond,
     setRealtimeLogsEnabled,
+    invalidateLogRequests,
     connectRealtime,
     disconnectRealtime,
   }

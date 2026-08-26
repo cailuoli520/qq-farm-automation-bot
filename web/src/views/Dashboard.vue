@@ -7,6 +7,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import BaseSwitch from '@/components/ui/BaseSwitch.vue'
+import { buildEventOptions, buildModuleOptions, getEventLabel, resolveLogLevel } from '@/features/logs/filter-options'
 import { useAccountStore } from '@/stores/account'
 import { useBagStore } from '@/stores/bag'
 import { useStatusStore } from '@/stores/status'
@@ -22,6 +23,12 @@ const {
   logs: statusLogs,
   accountLogs: statusAccountLogs,
   realtimeConnected,
+  observedLogModules,
+  observedLogEvents,
+  observedLogEventModules,
+  observedDevLogModules,
+  observedDevLogEvents,
+  observedDevLogEventModules,
 } = storeToRefs(statusStore)
 const { currentAccountId, currentAccount } = storeToRefs(accountStore)
 const { dashboardItems } = storeToRefs(bagStore)
@@ -29,81 +36,74 @@ const logContainer = ref<HTMLElement | null>(null)
 const autoScroll = ref(true)
 const lastBagFetchAt = ref(0)
 const clearingLogs = ref(false)
+const activeLogView = ref<'runtime' | 'account'>('runtime')
+const accountLogKeyword = ref('')
 
 const filter = reactive({
   module: '',
   event: '',
-  keyword: '',
-  isWarn: '',
+  keywordInput: '',
+  keywordApplied: '',
+  level: '',
   // 开发日志（调试/探测类）：默认关闭（不显示），调试时打开
   showDev: false,
 })
 
-const allLogs = computed(() => {
-  const sLogs = statusLogs.value || []
-  const aLogs = (statusAccountLogs.value || []).map((l: any) => ({
-    ts: new Date(l.time).getTime(),
-    time: l.time,
-    tag: l.action === 'Error' ? '错误' : '系统',
-    msg: l.reason ? `${l.msg} (${l.reason})` : l.msg,
-    isAccountLog: true,
-  }))
+const runtimeLogs = computed(() => (statusLogs.value || [])
+  .filter((log: any) => (!(log.meta && log.meta.dev) || filter.showDev))
+  .sort((a: any, b: any) => Number(a.ts || 0) - Number(b.ts || 0)))
 
-  return [...sLogs, ...aLogs].sort((a: any, b: any) => a.ts - b.ts).filter((l: any) => !l.isAccountLog && (!(l.meta && l.meta.dev) || filter.showDev))
+const accountLogs = computed(() => {
+  const terms = accountLogKeyword.value.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  return (statusAccountLogs.value || [])
+    .filter((log: any) => String(log?.accountId || log?.id || '') === String(currentAccountId.value || ''))
+    .filter((log: any) => {
+      if (!terms.length)
+        return true
+      const text = `${log?.action || ''} ${log?.accountName || ''} ${log?.msg || ''} ${log?.reason || ''}`.toLowerCase()
+      return terms.every(term => text.includes(term))
+    })
+    .map((log: any) => ({
+      ...log,
+      ts: Number(log.ts) || Date.parse(String(log.time || '')) || 0,
+    }))
+    .sort((a: any, b: any) => a.ts - b.ts)
 })
 
+const visibleLogs = computed(() => activeLogView.value === 'runtime' ? runtimeLogs.value : accountLogs.value)
+
 const hasActiveLogFilter = computed(() =>
-  !!(filter.module || filter.event || filter.keyword || filter.isWarn),
+  !!(filter.module || filter.event || filter.keywordApplied || filter.level),
 )
 
-const modules = [
-  { label: '所有模块', value: '' },
-  { label: '农场', value: 'farm' },
-  { label: '好友', value: 'friend' },
-  { label: '仓库', value: 'warehouse' },
-  { label: '任务', value: 'task' },
-  { label: '系统', value: 'system' },
-]
+const visibleObservedLogModules = computed(() => filter.showDev
+  ? [...new Set([...observedLogModules.value, ...observedDevLogModules.value])]
+  : observedLogModules.value)
+const visibleObservedLogEvents = computed(() => filter.showDev
+  ? [...new Set([...observedLogEvents.value, ...observedDevLogEvents.value])]
+  : observedLogEvents.value)
+const visibleObservedLogEventModules = computed(() => {
+  if (!filter.showDev)
+    return observedLogEventModules.value
+  const merged: Record<string, string[]> = {}
+  for (const source of [observedLogEventModules.value, observedDevLogEventModules.value]) {
+    for (const [event, eventModules] of Object.entries(source))
+      merged[event] = [...new Set([...(merged[event] || []), ...eventModules])]
+  }
+  return merged
+})
 
-const events = [
-  { label: '所有事件', value: '' },
-  { label: '农场巡查', value: 'farm_cycle' },
-  { label: '收获作物', value: 'harvest_crop' },
-  { label: '清理枯株', value: 'remove_plant' },
-  { label: '种植种子', value: 'plant_seed' },
-  { label: '施加化肥', value: 'fertilize' },
-  { label: '土地推送', value: 'lands_notify' },
-  { label: '选择种子', value: 'seed_pick' },
-  { label: '购买种子', value: 'seed_buy' },
-  { label: '购买化肥', value: 'fertilizer_buy' },
-  { label: '开启礼包', value: 'fertilizer_gift_open' },
-  { label: '获取任务', value: 'task_scan' },
-  { label: '完成任务', value: 'task_claim' },
-  { label: '免费礼包', value: 'mall_free_gifts' },
-  { label: '分享奖励', value: 'daily_share' },
-  { label: '会员礼包', value: 'vip_daily_gift' },
-  { label: '月卡礼包', value: 'month_card_gift' },
-  { label: '图鉴奖励', value: 'illustrated_rewards' },
-  { label: '邮箱领取', value: 'email_rewards' },
-  { label: '出售成功', value: 'sell_success' },
-  { label: '土地升级', value: 'upgrade_land' },
-  { label: '土地解锁', value: 'unlock_land' },
-  { label: '好友巡查', value: 'friend_cycle' },
-  { label: '访问好友', value: 'visit_friend' },
-]
-
-const eventLabelMap: Record<string, string> = Object.fromEntries(
-  events.filter(e => e.value).map(e => [e.value, e.label]),
-)
-
-function getEventLabel(event: string) {
-  return eventLabelMap[event] || event
-}
-
-const logs = [
+const modules = computed(() => buildModuleOptions(visibleObservedLogModules.value))
+const events = computed(() => buildEventOptions(
+  visibleObservedLogEvents.value,
+  filter.module,
+  visibleObservedLogEventModules.value,
+))
+const levels = [
   { label: '所有等级', value: '' },
   { label: '普通', value: 'info' },
   { label: '警告', value: 'warn' },
+  { label: '错误', value: 'error' },
 ]
 
 const displayName = computed(() => {
@@ -264,20 +264,42 @@ function formatDuration(seconds: number) {
   return `${pad(h)}:${pad(m)}:${pad(s)}`
 }
 
-function getLogTagClass(tag: string) {
-  if (tag === '错误')
+function getLogTagClass(tag: string, log: any) {
+  const level = resolveLogLevel(log)
+  if (level === 'error')
     return 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+  if (level === 'warn')
+    return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
   if (tag === '系统')
     return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-  if (tag === '警告')
-    return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300'
   return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
 }
 
-function getLogMsgClass(tag: string) {
-  if (tag === '错误')
+function getLogMsgClass(log: any) {
+  if (resolveLogLevel(log) === 'error')
     return 'text-red-600 dark:text-red-400'
+  if (resolveLogLevel(log) === 'warn')
+    return 'text-orange-600 dark:text-orange-400'
   return 'text-gray-700 dark:text-gray-300'
+}
+
+const ACCOUNT_ACTION_LABELS: Record<string, string> = {
+  add: '添加账号',
+  update: '更新账号',
+  start: '启动账号',
+  stop: '停止账号',
+  delete: '删除账号',
+  start_failed: '启动失败',
+  unexpected_exit: '异常退出',
+  kickout_stop: '被踢下线',
+  reauth_required: '需要重新认证',
+  offline_delete: '离线自动删除',
+  auto_relogin: '自动重登',
+}
+
+function getAccountActionLabel(action: unknown) {
+  const key = String(action || '')
+  return ACCOUNT_ACTION_LABELS[key] || key || '账号动态'
 }
 
 function formatLogTime(timeStr: string) {
@@ -369,15 +391,15 @@ async function refresh(forceReloadLogs = false) {
     // 首次加载、断线兜底时走 HTTP；连接正常时优先走 WS 实时推送
     if (!realtimeConnected.value) {
       await statusStore.fetchStatus(currentAccountId.value)
-      await statusStore.fetchAccountLogs()
+      await statusStore.fetchAccountLogs(currentAccountId.value)
     }
 
     if (forceReloadLogs || hasActiveLogFilter.value || !realtimeConnected.value) {
       await statusStore.fetchLogs(currentAccountId.value, {
         module: filter.module || undefined,
         event: filter.event || undefined,
-        keyword: filter.keyword || undefined,
-        isWarn: filter.isWarn === 'warn' ? true : filter.isWarn === 'info' ? false : undefined,
+        keyword: filter.keywordApplied || undefined,
+        level: filter.level || undefined,
         hideDev: !filter.showDev,
       })
     }
@@ -387,17 +409,57 @@ async function refresh(forceReloadLogs = false) {
   }
 }
 
-function onLogFilterChange() {
-  refresh(true)
+async function applyRuntimeLogMode(forceReload = false) {
+  statusStore.invalidateLogRequests()
+  statusStore.setRealtimeLogsEnabled(false)
+  if (forceReload || hasActiveLogFilter.value || !realtimeConnected.value)
+    await refresh(true)
+  statusStore.setRealtimeLogsEnabled(!hasActiveLogFilter.value)
 }
 
 function onLogSearchTrigger() {
-  refresh(true)
+  filter.keywordApplied = filter.keywordInput.trim()
+  void applyRuntimeLogMode(true)
+}
+
+function onLogFilterChange() {
+  void applyRuntimeLogMode(true)
+}
+
+function onModuleFilterChange() {
+  const availableEvents = new Set(events.value.map(option => option.value))
+  if (filter.event && !availableEvents.has(filter.event))
+    filter.event = ''
+  onLogFilterChange()
+}
+
+async function onDevLogChange() {
+  if (hasActiveLogFilter.value) {
+    await applyRuntimeLogMode(true)
+    return
+  }
+  statusStore.invalidateLogRequests()
+  await refresh(true)
+}
+
+function resetLogFilters() {
+  filter.module = ''
+  filter.event = ''
+  filter.keywordInput = ''
+  filter.keywordApplied = ''
+  filter.level = ''
+  filter.showDev = false
+  void applyRuntimeLogMode()
 }
 
 watch(currentAccountId, async () => {
   diamondBalance.value = 0
-  await refresh()
+  statusStore.connectRealtime(currentAccountId.value)
+  statusStore.setRealtimeLogsEnabled(!hasActiveLogFilter.value)
+  await Promise.all([
+    refresh(hasActiveLogFilter.value || !realtimeConnected.value),
+    statusStore.fetchAccountLogs(currentAccountId.value),
+  ])
   await refreshDiamond()
   scrollToBottom()
 })
@@ -413,11 +475,6 @@ watch(() => JSON.stringify(status.value?.operations || {}), (next, prev) => {
   if (!realtimeConnected.value || next === prev)
     return
   refreshBag()
-})
-
-watch(hasActiveLogFilter, (enabled) => {
-  statusStore.setRealtimeLogsEnabled(!enabled)
-  refresh()
 })
 
 function onLogScroll(e: Event) {
@@ -436,7 +493,7 @@ async function clearLogs() {
     const { data } = await api.delete('/api/logs')
     if (data?.ok) {
       toastStore.success('日志已清空')
-      await refresh(true)
+      await applyRuntimeLogMode()
     }
     else {
       toastStore.error(`清空失败: ${data?.error || '未知错误'}`)
@@ -452,7 +509,7 @@ async function clearLogs() {
 }
 
 // Auto scroll logs
-watch(allLogs, () => {
+watch(visibleLogs, () => {
   nextTick(() => {
     if (logContainer.value && autoScroll.value) {
       logContainer.value.scrollTop = logContainer.value.scrollHeight
@@ -469,8 +526,12 @@ function scrollToBottom() {
 }
 
 onMounted(async () => {
+  statusStore.connectRealtime(currentAccountId.value)
   statusStore.setRealtimeLogsEnabled(!hasActiveLogFilter.value)
-  await refresh()
+  await Promise.all([
+    refresh(hasActiveLogFilter.value || !realtimeConnected.value),
+    statusStore.fetchAccountLogs(currentAccountId.value),
+  ])
   await refreshDiamond()
   scrollToBottom()
 })
@@ -656,18 +717,38 @@ useIntervalFn(updateCountdowns, 1000)
       <div class="flex flex-1 flex-col gap-6 md:w-3/4">
         <!-- Logs -->
         <div class="flex flex-1 flex-col rounded-lg bg-white p-6 shadow md:overflow-hidden dark:bg-gray-800">
-          <div class="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <h3 class="flex items-center gap-2 text-lg font-medium">
-              <div class="i-carbon-document" />
-              <span>运行日志</span>
-            </h3>
+          <div class="mb-4 flex flex-col gap-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <h3 class="flex items-center gap-2 text-lg font-medium">
+                <div class="i-carbon-document" />
+                <span>日志</span>
+              </h3>
+              <div class="inline-flex rounded-lg bg-gray-100 p-1 text-sm dark:bg-gray-700/60">
+                <button
+                  type="button"
+                  class="rounded-md px-3 py-1.5 transition-colors"
+                  :class="activeLogView === 'runtime' ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-800 dark:text-blue-400' : 'text-gray-500 dark:text-gray-300'"
+                  @click="activeLogView = 'runtime'"
+                >
+                  运行日志
+                </button>
+                <button
+                  type="button"
+                  class="rounded-md px-3 py-1.5 transition-colors"
+                  :class="activeLogView === 'account' ? 'bg-white text-blue-600 shadow-sm dark:bg-gray-800 dark:text-blue-400' : 'text-gray-500 dark:text-gray-300'"
+                  @click="activeLogView = 'account'"
+                >
+                  账号动态
+                </button>
+              </div>
+            </div>
 
-            <div class="flex flex-wrap items-center gap-2 text-sm">
+            <div v-if="activeLogView === 'runtime'" class="flex flex-wrap items-center justify-end gap-2 text-sm">
               <BaseSelect
                 v-model="filter.module"
                 :options="modules"
                 class="w-32"
-                @change="onLogFilterChange"
+                @change="onModuleFilterChange"
               />
 
               <BaseSelect
@@ -678,14 +759,14 @@ useIntervalFn(updateCountdowns, 1000)
               />
 
               <BaseSelect
-                v-model="filter.isWarn"
-                :options="logs"
+                v-model="filter.level"
+                :options="levels"
                 class="w-32"
                 @change="onLogFilterChange"
               />
 
               <BaseInput
-                v-model="filter.keyword"
+                v-model="filter.keywordInput"
                 placeholder="关键词..."
                 class="w-32"
                 clearable
@@ -696,7 +777,7 @@ useIntervalFn(updateCountdowns, 1000)
               <BaseSwitch
                 v-model="filter.showDev"
                 label="开发日志"
-                @change="onLogFilterChange"
+                @change="onDevLogChange"
               />
 
               <BaseButton
@@ -708,6 +789,16 @@ useIntervalFn(updateCountdowns, 1000)
               </BaseButton>
 
               <BaseButton
+                v-if="hasActiveLogFilter || filter.showDev || filter.keywordInput"
+                variant="secondary"
+                size="sm"
+                title="重置筛选"
+                @click="resetLogFilters"
+              >
+                <div class="i-carbon-filter-reset" />
+              </BaseButton>
+
+              <BaseButton
                 variant="secondary"
                 size="sm"
                 :loading="clearingLogs"
@@ -716,18 +807,38 @@ useIntervalFn(updateCountdowns, 1000)
                 <div class="i-carbon-trash-can" />
               </BaseButton>
             </div>
+            <div v-else class="flex flex-wrap items-center justify-end gap-2 text-sm">
+              <BaseInput
+                v-model="accountLogKeyword"
+                placeholder="搜索账号动态..."
+                class="w-56"
+                clearable
+              />
+              <span class="text-xs text-gray-400">仅显示当前账号，共 {{ accountLogs.length }} 条</span>
+            </div>
           </div>
 
           <div ref="logContainer" class="max-h-[50vh] min-h-0 flex-1 overflow-y-auto rounded bg-gray-50 p-4 text-sm leading-relaxed font-mono dark:bg-gray-900" @scroll="onLogScroll">
-            <div v-if="!allLogs.length" class="py-8 text-center text-gray-400">
-              暂无日志
+            <div v-if="!visibleLogs.length" class="py-8 text-center text-gray-400">
+              {{ activeLogView === 'runtime' ? '暂无运行日志' : '暂无账号动态' }}
             </div>
-            <div v-for="log in allLogs" :key="log.ts + log.msg" class="mb-1 break-all">
-              <span class="mr-2 select-none text-gray-400">[{{ formatLogTime(log.time) }}]</span>
-              <span class="mr-2 rounded px-1.5 py-0.5 text-xs font-bold" :class="getLogTagClass(log.tag)">{{ log.tag }}</span>
-              <span v-if="log.meta?.event" class="mr-2 rounded bg-blue-50 px-1.5 py-0.5 text-xs text-blue-500 dark:bg-blue-900/20 dark:text-blue-400">{{ getEventLabel(log.meta.event) }}</span>
-              <span :class="getLogMsgClass(log.tag)">{{ log.msg }}</span>
-            </div>
+            <template v-if="activeLogView === 'runtime'">
+              <div v-for="log in runtimeLogs" :key="`${log.ts}:${log.msg}:${log.meta?.event || ''}`" class="mb-1 break-all">
+                <span class="mr-2 select-none text-gray-400">[{{ formatLogTime(log.time) }}]</span>
+                <span class="mr-2 rounded px-1.5 py-0.5 text-xs font-bold" :class="getLogTagClass(log.tag, log)">{{ log.tag }}</span>
+                <span v-if="log.meta?.event" class="mr-2 rounded bg-blue-50 px-1.5 py-0.5 text-xs text-blue-500 dark:bg-blue-900/20 dark:text-blue-400">{{ getEventLabel(log.meta.event) }}</span>
+                <span :class="getLogMsgClass(log)">{{ log.msg }}</span>
+              </div>
+            </template>
+            <template v-else>
+              <div v-for="log in accountLogs" :key="`${log.ts}:${log.action}:${log.msg}`" class="mb-2 break-all">
+                <span class="mr-2 select-none text-gray-400">[{{ formatLogTime(log.time) }}]</span>
+                <span class="mr-2 rounded bg-violet-100 px-1.5 py-0.5 text-xs text-violet-700 font-bold dark:bg-violet-900/30 dark:text-violet-300">{{ getAccountActionLabel(log.action) }}</span>
+                <span v-if="log.accountName" class="mr-2 text-xs text-gray-500">{{ log.accountName }}</span>
+                <span class="text-gray-700 dark:text-gray-300">{{ log.msg }}</span>
+                <span v-if="log.reason" class="ml-2 text-orange-600 dark:text-orange-400">({{ log.reason }})</span>
+              </div>
+            </template>
           </div>
         </div>
       </div>

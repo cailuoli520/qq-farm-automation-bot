@@ -103,7 +103,18 @@ function createDataProvider(options: DataProviderOptions): DataProvider {
             return filterLogs(globalLogs.filter(l => String(l.accountId || '') === accId), opts).slice(-max);
         },
 
-        getAccountLogs: (limit) => accountLogs.slice(-limit).reverse(),
+        getAccountLogs: (accountRefOrLimit, maybeLimit) => {
+            const legacyLimitCall = maybeLimit === undefined && typeof accountRefOrLimit === 'number';
+            const accountRef = legacyLimitCall ? '' : accountRefOrLimit;
+            const limit = legacyLimitCall ? accountRefOrLimit : maybeLimit;
+            const max = Math.max(1, Number(limit) || 100);
+            const rawRef = normalizeAccountRef(accountRef);
+            const accountId = resolveAccountRefId(accountRef);
+            const list = rawRef && rawRef !== 'all' && accountId
+                ? accountLogs.filter(entry => String(entry.accountId || entry.id || '') === String(accountId))
+                : accountLogs;
+            return list.slice(-max).reverse();
+        },
         addAccountLog: (action, msg, accountId, accountName, extra) => addAccountLog(action, msg, accountId, accountName, extra),
 
         clearLogs: (accountRef) => {

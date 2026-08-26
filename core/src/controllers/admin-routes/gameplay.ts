@@ -472,6 +472,15 @@ function registerGameplayRoutes(options: GameplayRouteOptions): void {
             if (!ok) {
                 return res.status(404).json({ ok: false, error: 'Account not found' });
             }
+            if (provider.addAccountLog) {
+                const account = provider.getAccounts().accounts.find((item: DynamicRecord) => String(item.id) === String(accountId));
+                provider.addAccountLog(
+                    'stop',
+                    `账号 ${(account && account.name) || accountId} 已手动停止`,
+                    accountId,
+                    account ? account.name : '',
+                );
+            }
             res.json({ ok: true });
         } catch (e) {
             res.status(500).json({ ok: false, error: errorMessage(e) });

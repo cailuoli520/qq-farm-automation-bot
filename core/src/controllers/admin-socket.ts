@@ -124,7 +124,10 @@ function createAdminSocket(options: AdminSocketOptions): SocketServer {
                 });
             }
             if (provider && typeof provider.getAccountLogs === 'function') {
-                let currentAccountLogs = provider.getAccountLogs(100);
+                const targetId = socket.data.accountId || '';
+                let currentAccountLogs = targetId
+                    ? provider.getAccountLogs(targetId, 300)
+                    : provider.getAccountLogs(300);
                 if (!Array.isArray(currentAccountLogs)) currentAccountLogs = [];
 
                 // 过滤账号操作日志：只返回用户有权限访问的账号的日志
@@ -134,6 +137,7 @@ function createAdminSocket(options: AdminSocketOptions): SocketServer {
                 }
 
                 socket.emit('account-logs:snapshot', {
+                    accountId: targetId || 'all',
                     logs: currentAccountLogs,
                 });
             }

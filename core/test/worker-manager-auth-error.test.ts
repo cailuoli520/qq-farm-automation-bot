@@ -66,7 +66,7 @@ test('可自动恢复的网关 400 不向面板暴露重新认证提示', async 
     });
 
     assert.equal(harness.workers[harness.account.id].wsError, null);
-    assert.equal(harness.accountLogs.length, 0);
+    assert.deepEqual(harness.accountLogs.map(entry => entry[0]), ['start']);
     assert.equal(harness.statuses.length, 0);
 });
 
@@ -85,7 +85,7 @@ test('自动恢复失败后才向面板发送重新认证提示', async (t) => {
         message: 'refresh token expired',
         at: harness.workers[harness.account.id].wsError.at,
     });
-    assert.equal(harness.accountLogs[0][0], 'reauth_required');
+    assert.equal(harness.accountLogs.find(entry => entry[0] === 'reauth_required')[0], 'reauth_required');
     assert.equal(harness.statuses[0].wsError.message, 'refresh token expired');
     assert.equal(harness.reauthRequiredStates.get(harness.account.id).message, 'refresh token expired');
 });

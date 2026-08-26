@@ -65,6 +65,7 @@ function createHarness() {
     FakeWorker.instances = [];
     const scheduler = new FakeScheduler();
     const workers = {};
+    const accountLogs = [];
     let now = 0;
     const manager = createWorkerManager({
         WorkerThread: FakeWorker,
@@ -75,7 +76,9 @@ function createHarness() {
         workers,
         globalLogs: [],
         log: () => {},
-        addAccountLog: () => {},
+        addAccountLog: (action, msg, accountId, accountName, extra = {}) => {
+            accountLogs.push({ action, msg, accountId, accountName, ...extra });
+        },
         normalizeStatusForPanel: value => value,
         buildConfigSnapshotForAccount: () => ({ automation: {} }),
         getOfflineAutoDeleteMs: () => Number.POSITIVE_INFINITY,
@@ -94,6 +97,7 @@ function createHarness() {
         manager,
         scheduler,
         workers,
+        accountLogs,
         advance(ms) { now += ms; },
     };
 }
@@ -124,6 +128,21 @@ test('Worker 启动只允许一个实例并发送启动与配置快照', () => {
         { type: 'start', config: { code: 'login-code', platform: 'qq' } },
         { type: 'config_sync', config: { automation: {} } },
     ]);
+    assert.deepEqual(harness.accountLogs.map(entry => entry.action), ['start']);
+});
+
+test('Worker 异常退出写入账号动态，正常停止不误报异常', async () => {
+    const abnormal = createHarness();
+    abnormal.manager.startWorker(abnormal.account);
+    abnormal.workers[abnormal.account.id].process.emit('exit', 2, 'SIGABRT');
+    assert.deepEqual(abnormal.accountLogs.map(entry => entry.action), ['start', 'unexpected_exit']);
+    assert.equal(abnormal.accountLogs[1].reason, 'code=2, signal=SIGABRT');
+
+    const normal = createHarness();
+    normal.manager.startWorker(normal.account);
+    normal.manager.stopWorker(normal.account.id);
+    await settleEvents();
+    assert.deepEqual(normal.accountLogs.map(entry => entry.action), ['start']);
 });
 
 test('停止和重启 Worker 会清理旧实例且只启动一个新实例', async () => {

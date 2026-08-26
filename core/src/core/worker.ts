@@ -240,6 +240,7 @@ setLogHook((tag: string, msg: string, isWarn: boolean, meta: DynamicRecord) => {
             tag,
             msg,
             isWarn,
+            level: isWarn ? 'warn' : 'info',
             meta: meta || {},
         }
     });

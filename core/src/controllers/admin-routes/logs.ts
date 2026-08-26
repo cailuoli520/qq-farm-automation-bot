@@ -51,6 +51,7 @@ function registerLogRoutes(options: LogRouteOptions): void {
                 tag: req.query.tag || '',
                 module: req.query.module || '',
                 event: req.query.event || '',
+                level: req.query.level || '',
                 keyword: req.query.keyword || '',
                 isWarn: req.query.isWarn,
                 timeFrom: req.query.timeFrom || '',
@@ -79,6 +80,7 @@ function registerLogRoutes(options: LogRouteOptions): void {
             tag: req.query.tag || '',
             module: req.query.module || '',
             event: req.query.event || '',
+            level: req.query.level || '',
             keyword: req.query.keyword || '',
             isWarn: req.query.isWarn,
             timeFrom: req.query.timeFrom || '',
@@ -125,4 +127,3 @@ function registerLogRoutes(options: LogRouteOptions): void {
 }
 
 export { registerLogRoutes };
-

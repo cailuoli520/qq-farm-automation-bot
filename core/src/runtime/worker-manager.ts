@@ -279,6 +279,7 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
             cur.count += 1;
             cur.lastReloginAt = Date.now();
             log('系统', `账号 ${acc.name} 自动重登中...`, { accountId: String(accountId) });
+            addAccountLog('auto_relogin', `账号 ${acc.name} 开始自动重登`, accountId, acc.name, { reason });
             startWorker(acc);
         });
     }
@@ -363,6 +364,7 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
             },
         });
         child.send({ type: 'config_sync', config: buildConfigSnapshotForAccount(account.id) });
+        addAccountLog('start', `账号 ${account.name} 已启动`, account.id, account.name);
 
         let lastPongAt = now();
         // 监听消息
@@ -430,6 +432,13 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
             // 自动重登失败检测：自动重登启动后短时间内进程异常退出（登录失败），禁用当天自动重登
             // 正常停止（stopWorker 设置 stopping=true）不会触发；被踢后 worker 自身退出也是 stopping=true
             if (current && !current.stopping) {
+                addAccountLog(
+                    'unexpected_exit',
+                    `账号 ${displayName} 进程异常退出`,
+                    account.id,
+                    displayName,
+                    { reason: `code=${code}, signal=${signal || 'none'}` },
+                );
                 const st = reloginState.get(account.id);
                 if (st && st.lastReloginAt > 0) {
                     const cfg = (typeof getAutoRelogin === 'function') ? getAutoRelogin(account.id) : null;
@@ -592,10 +601,16 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
             }
         } else if (msg.type === 'log') {
             // 保存日志
+            const explicitLevel = String(msg.data?.level || '').toLowerCase();
+            const level = explicitLevel === 'info' || explicitLevel === 'warn' || explicitLevel === 'error'
+                ? explicitLevel
+                : String(msg.data?.tag || '') === '错误' ? 'error' : msg.data?.isWarn === true ? 'warn' : 'info';
             const logEntry: LogEntry = {
                 ...msg.data,
                 accountId,
                 accountName: worker.name,
+                level,
+                isWarn: level !== 'info',
                 ts: Date.now(),
                 meta: msg.data && msg.data.meta ? msg.data.meta : {},
             };

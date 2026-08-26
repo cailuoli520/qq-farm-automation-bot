@@ -255,16 +255,27 @@ function registerAccountRoutes(options: AccountRouteOptions): void {
         try {
             const limit = Number.parseInt(req.query.limit) || 100;
             const currentUser = req.currentUser;
+            const headerAccountId = Array.isArray(req.headers['x-account-id'])
+                ? req.headers['x-account-id'][0]
+                : req.headers['x-account-id'];
+            const accountRef = String(req.query.accountId || headerAccountId || '').trim();
+            const accountId = accountRef && accountRef !== 'all' ? resolveAccId(accountRef) : '';
 
-            let list = provider.getAccountLogs ? provider.getAccountLogs(limit) : [];
+            if (accountId && !checkAccountAccess(req, accountId)) {
+                return res.status(403).json({ ok: false, error: '无权访问此账号' });
+            }
+
+            let list = provider.getAccountLogs
+                ? (accountId ? provider.getAccountLogs(accountId, limit) : provider.getAccountLogs(limit))
+                : [];
             if (!Array.isArray(list)) list = [];
 
             // 所有用户（包括管理员）只能看到自己账号的操作日志
             if (currentUser) {
-                const accessibleIds = getAccessibleAccountIds(req);
+                const accessibleIds = new Set(getAccessibleAccountIds(req).map(value => String(value)));
                 list = list.filter((log: DynamicRecord) => {
-                    const logAccountId = log.accountId || log.id;
-                    return accessibleIds.includes(logAccountId);
+                    const logAccountId = String(log.accountId || log.id || '');
+                    return accessibleIds.has(logAccountId);
                 });
             }
 

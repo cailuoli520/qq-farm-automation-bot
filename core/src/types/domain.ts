@@ -33,10 +33,14 @@ export interface LogEntry {
     accountId?: AccountId;
     id?: AccountId;
     accountName?: string;
+    isWarn?: boolean;
+    level?: 'info' | 'warn' | 'error';
+    ts?: number;
     time?: string;
     tag?: string;
     msg?: string;
     meta?: Record<string, unknown>;
+    _searchText?: string;
     [key: string]: unknown;
 }
 

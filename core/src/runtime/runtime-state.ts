@@ -30,10 +30,20 @@ interface LogFilters {
     tag?: unknown;
     module?: unknown;
     event?: unknown;
+    level?: unknown;
     isWarn?: unknown;
     timeFrom?: unknown;
     timeTo?: unknown;
     hideDev?: unknown;
+}
+
+export type LogLevel = 'info' | 'warn' | 'error';
+
+function resolveLogLevel(entry: LogEntry | null | undefined): LogLevel {
+    const explicit = String(entry?.level || '').toLowerCase();
+    if (explicit === 'info' || explicit === 'warn' || explicit === 'error') return explicit;
+    if (String(entry?.tag || '') === '错误') return 'error';
+    return entry?.isWarn === true ? 'warn' : 'info';
 }
 
 export interface RuntimeState {
@@ -103,7 +113,7 @@ function createRuntimeState(options: RuntimeStateOptions): RuntimeState {
 
     function log(tag: string, msg: string, extra: RuntimeRecord = {}): void {
         const time = formatLocalDateTime24(new Date());
-        const level = tag === '错误' ? 'error' : 'info';
+        const level: LogLevel = tag === '错误' ? 'error' : 'info';
         if (level === 'error') runtimeLogger.error(msg, { tag, ...extra });
         else runtimeLogger.info(msg, { tag, ...extra });
         const moduleName = (tag === '系统' || tag === '错误') ? 'system' : '';
@@ -111,10 +121,14 @@ function createRuntimeState(options: RuntimeStateOptions): RuntimeState {
             time,
             tag,
             msg,
+            level,
+            isWarn: level !== 'info',
             meta: moduleName ? { module: moduleName } : {},
             ts: Date.now(),
             ...extra,
         };
+        entry.level = resolveLogLevel(entry);
+        entry.isWarn = entry.level !== 'info';
         entry._searchText = `${entry.msg || ''} ${entry.tag || ''} ${JSON.stringify(entry.meta || {})}`.toLowerCase();
         globalLogs.push(entry);
         if (globalLogs.length > 1000) globalLogs.shift();
@@ -210,6 +224,10 @@ function createRuntimeState(options: RuntimeStateOptions): RuntimeState {
         const tag = String(f.tag || '').trim();
         const moduleName = String(f.module || '').trim();
         const eventName = String(f.event || '').trim();
+        const requestedLevel = String(f.level || '').trim().toLowerCase();
+        const level = requestedLevel === 'info' || requestedLevel === 'warn' || requestedLevel === 'error'
+            ? requestedLevel as LogLevel
+            : '';
         const isWarn = f.isWarn;
         const timeFromMs = f.timeFrom ? Date.parse(String(f.timeFrom)) : Number.NaN;
         const timeToMs = f.timeTo ? Date.parse(String(f.timeTo)) : Number.NaN;
@@ -231,9 +249,11 @@ function createRuntimeState(options: RuntimeStateOptions): RuntimeState {
             if (eventName && String((l.meta || {}).event || '') !== eventName) return false;
             // 过滤开发模式日志（调试/探测类，meta.dev=true），默认开启
             if (f.hideDev && !!((l.meta || {}).dev)) return false;
-            if (isWarn !== undefined && isWarn !== null && String(isWarn) !== '') {
+            if (level) {
+                if (resolveLogLevel(l) !== level) return false;
+            } else if (isWarn !== undefined && isWarn !== null && String(isWarn) !== '') {
                 const expected = String(isWarn) === '1' || String(isWarn).toLowerCase() === 'true';
-                if (!!l.isWarn !== expected) return false;
+                if ((resolveLogLevel(l) !== 'info') !== expected) return false;
             }
             if (keywordTerms.length > 0) {
                 const text = String(l._searchText || `${l.msg || ''} ${l.tag || ''}`).toLowerCase();
@@ -260,4 +280,4 @@ function createRuntimeState(options: RuntimeStateOptions): RuntimeState {
     };
 }
 
-export { createRuntimeState, formatLocalDateTime24 };
+export { createRuntimeState, formatLocalDateTime24, resolveLogLevel };
