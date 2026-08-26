@@ -1,4 +1,9 @@
-FROM node:20-alpine AS builder
+ARG NODE_IMAGE=node:20.19.6-alpine3.21
+ARG NPM_REGISTRY=https://registry.npmjs.org/
+
+FROM ${NODE_IMAGE} AS builder
+
+ARG NPM_REGISTRY
 
 WORKDIR /app
 
@@ -8,7 +13,7 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY core/package.json ./core/
 COPY web/package.json ./web/
 
-RUN pnpm config set registry https://registry.npmmirror.com/
+RUN pnpm config set registry "${NPM_REGISTRY}"
 RUN pnpm install --frozen-lockfile
 
 COPY core ./core
@@ -17,7 +22,9 @@ COPY web ./web
 RUN pnpm build:web && pnpm -C core build:core
 
 # ==========================================
-FROM node:20-alpine AS prod-deps
+FROM ${NODE_IMAGE} AS prod-deps
+
+ARG NPM_REGISTRY
 
 WORKDIR /app
 
@@ -27,11 +34,12 @@ COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY core/package.json ./core/
 COPY web/package.json ./web/
 
+RUN pnpm config set registry "${NPM_REGISTRY}"
 RUN pnpm -C core install --prod --frozen-lockfile
 
 # ==========================================
 
-FROM node:20-alpine AS runner
+FROM ${NODE_IMAGE} AS runner
 
 WORKDIR /app/core
 
