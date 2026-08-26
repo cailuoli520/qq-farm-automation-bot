@@ -6,11 +6,11 @@ import { getUserState, sendMsgAsync } from '../utils/network';
 import { types } from '../utils/proto';
 import { getServerTimeSec, toLong, toNum } from '../utils/utils';
 import { bytesToText, int64Number, int64String, itemDto } from './activity-dto';
+import { withFriendVisit } from './friend-visit';
 import { asRecord, recordArray } from './service-boundaries';
 
 const { PlantPhase, PHASE_NAMES } = require('../config/config');
 const { getAllLands, buildLandMap, getCurrentPhase, getDisplayLandContext } = require('./farm');
-const { enterFriendFarm, leaveFriendFarm } = require('./friend');
 const { getBag, getBagItems } = require('./warehouse');
 
 type DynamicRecord = Record<string, any>;
@@ -378,14 +378,11 @@ async function getDewTargets(hostGidInput: unknown = ''): Promise<DynamicRecord>
         const lands = buildDewLandTargets(reply.lands, host);
         return { host, lands, count: lands.length, serverValidationRequired: true };
     }
-    const enterReply = await enterFriendFarm(host.gid);
-    try {
+    return withFriendVisit({ source: 'manual', friendGid: host.gid }, async ({ enterReply }) => {
         const enteredHost = friendHost(enterReply, host.gid);
         const lands = buildDewLandTargets(enterReply.lands, enteredHost);
         return { host: enteredHost, lands, count: lands.length, serverValidationRequired: true };
-    } finally {
-        await leaveFriendFarm(host.gid);
-    }
+    });
 }
 
 function findDewStack(bagReply: unknown): DynamicRecord | null {
@@ -432,15 +429,12 @@ async function useDew(hostGidInput: unknown, landIdInput: unknown): Promise<Dyna
         if (!target) throw businessError('QIXI_DEW_TARGET_UNAVAILABLE', '所选地块已无可使用灵露的作物，请刷新后重选');
         reply = await sendDewUse(stack, host.gid, landId);
     } else {
-        const enterReply = await enterFriendFarm(host.gid);
-        try {
+        reply = await withFriendVisit({ source: 'manual', friendGid: host.gid }, async ({ enterReply }) => {
             const enteredHost = friendHost(enterReply, host.gid);
             target = buildDewLandTargets(enterReply.lands, enteredHost).find(entry => entry.landId === landId);
             if (!target) throw businessError('QIXI_DEW_TARGET_UNAVAILABLE', '所选地块已无可使用灵露的作物，请刷新后重选');
-            reply = await sendDewUse(stack, host.gid, landId);
-        } finally {
-            await leaveFriendFarm(host.gid);
-        }
+            return sendDewUse(stack, host.gid, landId);
+        });
     }
     ensureDewApplied(reply);
     const rewards = [...recordArray(reply.items), ...recordArray(asRecord(reply.land_reward).items)].map(itemDto);
