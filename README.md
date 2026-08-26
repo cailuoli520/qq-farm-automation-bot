@@ -110,6 +110,14 @@ docker compose ps
 docker compose logs -f qq-farm-bot
 ```
 
+生产镜像固定使用 Node `20.19.6-alpine3.21`，pnpm 版本由根目录 `packageManager` 锁定。依赖源默认使用 npm 官方源；网络受限时可在根目录 `.env` 中覆盖：
+
+```dotenv
+NPM_REGISTRY=https://registry.npmmirror.com/
+```
+
+如需测试其他基础镜像，可同时设置 `NODE_IMAGE`。修改构建参数或排查旧缓存时执行 `docker compose build --pull --no-cache`；日常更新继续使用 `docker compose up -d --build`，以便复用分层缓存。
+
 资源同步仅供项目维护者在 macOS 上使用。普通用户只需运行 Bot，静态资源已经包含在仓库和镜像中。
 
 ## 项目结构
