@@ -231,7 +231,9 @@ button[data-active] .activity-nav__visual img {
 }
 .activity-nav[data-theme='rain'] .activity-nav__rain {
   filter: grayscale(1) opacity(0.64);
-  transition: filter 0.16s ease, transform 0.16s ease;
+  transition:
+    filter 0.16s ease,
+    transform 0.16s ease;
 }
 .activity-nav[data-theme='rain'] button[data-active] .activity-nav__rain {
   filter: none;

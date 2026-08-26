@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /* eslint-disable style/max-statements-per-line */
 import type { ActivityTab } from '@/components/activity/BottomNav.vue'
+import type { ActivityEventKey } from '@/features/activity-center/types'
 import type { ShopGoodsDto } from '@/stores/activity-center'
 import { storeToRefs } from 'pinia'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -16,7 +17,6 @@ import SolarTermsTab from '@/components/activity/SolarTermsTab.vue'
 import StarSandExchangeDialog from '@/components/activity/StarSandExchangeDialog.vue'
 import StarSandShopTab from '@/components/activity/StarSandShopTab.vue'
 import TravelPassTab from '@/components/activity/TravelPassTab.vue'
-import type { ActivityEventKey } from '@/features/activity-center/types'
 import { activityEvents, activityTabByKey } from '@/features/activity-center/registry'
 import { useAccountStore } from '@/stores/account'
 import { useActivityCenterStore } from '@/stores/activity-center'
@@ -43,31 +43,43 @@ const activityDataReady = computed(() => !!currentAccountId.value && successfulA
 function live(endTime: number | null | undefined) { return !endTime || endTime > serverNow.value }
 function withinWindow(startTime: number | null | undefined, endTime: number | null | undefined) { return (!startTime || startTime <= serverNow.value) && live(endTime) }
 function solarTermsLive() {
-  if (!solarTerms.value) return false
+  if (!solarTerms.value)
+    return false
   return !solarTerms.value.terms.length || solarTerms.value.terms.some(term => withinWindow(term.startTime, term.endTime))
 }
 function stellarTabLive(tab: ActivityTab) {
-  if (tab === 'travel') return !!season.value && withinWindow(season.value.startTime, season.value.endTime)
-  if (tab === 'constellation') return !!constellation.value && withinWindow(constellation.value.startTime, constellation.value.endTime)
-  if (tab === 'shop') return !!shop.value && withinWindow(shop.value.startTime, shop.value.endTime)
-  if (tab === 'solar') return solarTermsLive()
+  if (tab === 'travel')
+    return !!season.value && withinWindow(season.value.startTime, season.value.endTime)
+  if (tab === 'constellation')
+    return !!constellation.value && withinWindow(constellation.value.startTime, constellation.value.endTime)
+  if (tab === 'shop')
+    return !!shop.value && withinWindow(shop.value.startTime, shop.value.endTime)
+  if (tab === 'solar')
+    return solarTermsLive()
   return false
 }
 const visibleActivityEvents = computed(() => {
-  if (!activityDataReady.value) return []
+  if (!activityDataReady.value)
+    return []
   return activityEvents.filter((event) => {
-    if (event.key === 'stellar') return event.tabs.some(stellarTabLive)
-    if (event.key === 'rainPoetry') return !!rainPoetry.value?.active && live(rainPoetry.value.endTime)
-    if (event.key === 'qingmei') return !!qingMei.value && withinWindow(qingMei.value.startTime, qingMei.value.endTime)
+    if (event.key === 'stellar')
+      return event.tabs.some(stellarTabLive)
+    if (event.key === 'rainPoetry')
+      return !!rainPoetry.value?.active && live(rainPoetry.value.endTime)
+    if (event.key === 'qingmei')
+      return !!qingMei.value && withinWindow(qingMei.value.startTime, qingMei.value.endTime)
     return !!qixi.value?.active && live(qixi.value.endTime)
   })
 })
 const visibleActivityTabs = computed(() => {
   const event = visibleActivityEvents.value.find(entry => entry.key === activeEvent.value)
-  return event ? event.tabs.map(key => activityTabByKey[key]).filter((tab) => {
-    if (event.key === 'stellar') return stellarTabLive(tab.key)
-    return true
-  }) : []
+  return event
+    ? event.tabs.map(key => activityTabByKey[key]).filter((tab) => {
+        if (event.key === 'stellar')
+          return stellarTabLive(tab.key)
+        return true
+      })
+    : []
 })
 const theme = computed(() => activeTabDefinition.value.theme)
 const endTime = computed(() => {
@@ -177,13 +189,15 @@ onUnmounted(() => {
         <div class="activity-spinner" /><strong>正在加载活动</strong>
       </div>
       <template v-else>
-        <div v-if="error || actionError || notice" class="activity-message" :class="{ success: notice && !error && !actionError, 'with-switcher': visibleActivityEvents.length > 1 }" role="status">
+        <div v-if="error || actionError || notice" class="activity-message" :class="{ 'success': notice && !error && !actionError, 'with-switcher': visibleActivityEvents.length > 1 }" role="status">
           <span>{{ actionError || error || notice }}</span><button v-if="error" type="button" :disabled="loading" @click="load(true)">
             重试
           </button>
         </div>
         <nav v-if="visibleActivityEvents.length > 1" class="event-switcher" aria-label="当前活动">
-          <button v-for="event in visibleActivityEvents" :key="event.key" type="button" :data-active="activeEvent === event.key || undefined" @click="activeEvent = event.key">{{ event.label }}</button>
+          <button v-for="event in visibleActivityEvents" :key="event.key" type="button" :data-active="activeEvent === event.key || undefined" @click="activeEvent = event.key">
+            {{ event.label }}
+          </button>
         </nav>
         <div v-if="activityDataReady && !visibleActivityEvents.length" class="activity-state">
           <strong>当前暂无活动</strong><span>过期活动入口已自动隐藏</span>
@@ -308,9 +322,9 @@ onUnmounted(() => {
   gap: 4px;
   padding: 4px;
   overflow-x: auto;
-  border: 1px solid rgba(255,255,255,.38);
+  border: 1px solid rgba(255, 255, 255, 0.38);
   border-radius: 18px;
-  background: rgba(16,55,75,.62);
+  background: rgba(16, 55, 75, 0.62);
   backdrop-filter: blur(10px);
   transform: translateX(-50%);
 }
@@ -319,7 +333,7 @@ onUnmounted(() => {
   padding: 5px 10px;
   border: 0;
   border-radius: 13px;
-  color: rgba(255,255,255,.78);
+  color: rgba(255, 255, 255, 0.78);
   background: transparent;
   font-size: 10px;
   white-space: nowrap;
@@ -328,7 +342,7 @@ onUnmounted(() => {
 .event-switcher button[data-active] {
   color: #245044;
   background: #f5f3bd;
-  box-shadow: 0 2px 7px rgba(0,30,45,.28);
+  box-shadow: 0 2px 7px rgba(0, 30, 45, 0.28);
 }
 .activity-center[data-theme='rain'] .event-switcher {
   gap: 2px;

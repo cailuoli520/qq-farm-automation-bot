@@ -55,7 +55,12 @@ defineProps<{ theme?: 'night' | 'day' | 'rain' }>()
 }
 .activity-shell--rain .activity-shell__stars {
   opacity: 0.13;
-  background-image: repeating-linear-gradient(112deg, transparent 0 20px, rgba(71, 126, 153, 0.5) 21px 22px, transparent 23px 43px);
+  background-image: repeating-linear-gradient(
+    112deg,
+    transparent 0 20px,
+    rgba(71, 126, 153, 0.5) 21px 22px,
+    transparent 23px 43px
+  );
   animation: rain-drift 2.4s linear infinite;
 }
 .activity-shell__frame {
@@ -96,7 +101,9 @@ defineProps<{ theme?: 'night' | 'day' | 'rain' }>()
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.07);
 }
 @keyframes rain-drift {
-  to { background-position: 26px 42px; }
+  to {
+    background-position: 26px 42px;
+  }
 }
 @media (min-width: 700px) {
   .activity-shell {

@@ -7,15 +7,6 @@ type ResearchNode = RainPoetryActivityDto['researchNodes'][number]
 type RainTask = RainPoetryActivityDto['tasks'][number]
 type RainWeather = RainWeatherCheckDto['weather']
 
-const RAIN_ITEM_NAMES: Record<string, string> = {
-  '1027': '雷电徽章',
-  '2159': '雨落成诗纪念奖励',
-  '4002': '闪电变异瓶',
-  '4003': '霹雳引雷瓶',
-  '5001': '天气采集瓶',
-  '5002': '雷雨召唤瓶',
-}
-
 const props = defineProps<{
   mode: 'tasks' | 'research'
   activity: RainPoetryActivityDto | null
@@ -40,6 +31,15 @@ const emit = defineEmits<{
   switchMode: [mode: 'tasks' | 'research']
 }>()
 
+const RAIN_ITEM_NAMES: Record<string, string> = {
+  1027: '雷电徽章',
+  2159: '雨落成诗纪念奖励',
+  4002: '闪电变异瓶',
+  4003: '霹雳引雷瓶',
+  5001: '天气采集瓶',
+  5002: '雷雨召唤瓶',
+}
+
 const selectedFriendGid = ref('')
 const confirmation = ref<ConfirmAction | null>(null)
 const busy = computed(() => props.pendingExchange || props.pendingCollect || props.pendingThunderstorm || props.pendingResearch)
@@ -55,9 +55,12 @@ function friendName(friend: any) {
 }
 
 function imageFor(itemId: string, fallback: string) {
-  if (itemId === '1027') return '/activity-center/rain/badge.svg'
-  if (itemId === '5001') return '/activity-center/rain/collection-bottle.svg'
-  if (itemId === '5002') return '/activity-center/rain/thunderstorm-bottle.svg'
+  if (itemId === '1027')
+    return '/activity-center/rain/badge.svg'
+  if (itemId === '5001')
+    return '/activity-center/rain/collection-bottle.svg'
+  if (itemId === '5002')
+    return '/activity-center/rain/thunderstorm-bottle.svg'
   return fallback
 }
 
@@ -90,74 +93,103 @@ function researchShortfall(node: ResearchNode) {
 }
 
 function researchButtonLabel(node: ResearchNode) {
-  if (node.claimed) return '已解锁'
-  if (props.pendingResearch && node.unlockable) return '解锁中'
-  if (node.unlockable) return '解锁奖励'
-  if (missingPrerequisites(node).length) return '需先完成前置'
-  if (!props.activity?.balances.known) return '余额未知'
-  if (researchShortfall(node) > 0n) return '徽章不足'
+  if (node.claimed)
+    return '已解锁'
+  if (props.pendingResearch && node.unlockable)
+    return '解锁中'
+  if (node.unlockable)
+    return '解锁奖励'
+  if (missingPrerequisites(node).length)
+    return '需先完成前置'
+  if (!props.activity?.balances.known)
+    return '余额未知'
+  if (researchShortfall(node) > 0n)
+    return '徽章不足'
   return '暂不可解锁'
 }
 
 function researchStatus(node: ResearchNode) {
-  if (node.claimed) return '奖励已领取，无需重复操作'
+  if (node.claimed)
+    return '奖励已领取，无需重复操作'
   const missing = prerequisiteNames(node, true)
-  if (missing.length) return `先解锁：${missing.join('、')}`
-  if (!props.activity?.balances.known) return '雷电徽章余额未知，请刷新页面'
+  if (missing.length)
+    return `先解锁：${missing.join('、')}`
+  if (!props.activity?.balances.known)
+    return '雷电徽章余额未知，请刷新页面'
   const shortfall = researchShortfall(node)
-  if (shortfall > 0n) return `还差 ${shortfall} 枚雷电徽章`
-  if (node.unlockable) return '条件已满足，现在可以解锁'
+  if (shortfall > 0n)
+    return `还差 ${shortfall} 枚雷电徽章`
+  if (node.unlockable)
+    return '条件已满足，现在可以解锁'
   return '条件已满足，等待活动开放；可刷新后再试'
 }
 
 const researchRecommendation = computed(() => {
   const node = nextResearchNode.value
-  if (!node) return { title: '本期研究已全部完成', detail: '所有研究奖励都已领取。', goTasks: false }
+  if (!node)
+    return { title: '本期研究已全部完成', detail: '所有研究奖励都已领取。', goTasks: false }
   const reward = displayName(node.reward)
-  if (node.unlockable) return { title: `下一步：解锁${reward}`, detail: `消耗 ${node.cost.count} 枚雷电徽章即可领取奖励。`, goTasks: false }
+  if (node.unlockable)
+    return { title: `下一步：解锁${reward}`, detail: `消耗 ${node.cost.count} 枚雷电徽章即可领取奖励。`, goTasks: false }
   const missing = prerequisiteNames(node, true)
-  if (missing.length) return { title: '下一步：先完成前置研究', detail: `请先解锁${missing.join('、')}。`, goTasks: false }
-  if (!props.activity?.balances.known) return { title: '下一步：刷新活动状态', detail: '雷电徽章余额尚未读取成功，刷新后再决定是否解锁。', goTasks: false }
+  if (missing.length)
+    return { title: '下一步：先完成前置研究', detail: `请先解锁${missing.join('、')}。`, goTasks: false }
+  if (!props.activity?.balances.known)
+    return { title: '下一步：刷新活动状态', detail: '雷电徽章余额尚未读取成功，刷新后再决定是否解锁。', goTasks: false }
   const shortfall = researchShortfall(node)
-  if (shortfall > 0n) return { title: '下一步：去赚雷电徽章', detail: `还差 ${shortfall} 枚，完成气象任务即可获得。`, goTasks: true }
+  if (shortfall > 0n)
+    return { title: '下一步：去赚雷电徽章', detail: `还差 ${shortfall} 枚，完成气象任务即可获得。`, goTasks: true }
   return { title: '下一步：继续完成气象任务', detail: '研究条件由活动逐步开放，完成任务后刷新状态再回来查看。', goTasks: true }
 })
 
 function taskProgress(task: RainTask) {
-  if (task.completed) return '已完成'
+  if (task.completed)
+    return '已完成'
   return amount(task.target) > 0n ? `${task.progress}/${task.target}` : '进行中'
 }
 
 function collectionStatus(weather: RainWeather) {
-  if (!weather.known) return '天气状态读取失败，请重新检查。'
+  if (!weather.known)
+    return '天气状态读取失败，请重新检查。'
   if (weather.thunderstorm)
     return props.activity?.actions.collect.enabled ? '检测到可采集雷雨，可以使用天气采集瓶。' : '检测到雷雨，但当前没有可用的天气采集瓶。'
-  if (weather.active) return `${weather.name}不可采集；天气采集瓶只能用于雷雨。`
+  if (weather.active)
+    return `${weather.name}不可采集；天气采集瓶只能用于雷雨。`
   return '好友当前天气晴朗，请换一位好友继续检查。'
 }
 
 function collectionButtonLabel(weather: RainWeather) {
-  if (props.pendingCollect) return '采集中'
-  if (!weather.known) return '天气未知'
-  if (!weather.thunderstorm) return weather.active ? '仅雷雨可采集' : '等待雷雨'
-  if (!props.activity?.actions.collect.enabled) return '缺少采集瓶'
+  if (props.pendingCollect)
+    return '采集中'
+  if (!weather.known)
+    return '天气未知'
+  if (!weather.thunderstorm)
+    return weather.active ? '仅雷雨可采集' : '等待雷雨'
+  if (!props.activity?.actions.collect.enabled)
+    return '缺少采集瓶'
   return '使用采集瓶'
 }
 
 function confirmAction() {
   const action = confirmation.value
-  if (!action) return
+  if (!action)
+    return
   confirmation.value = null
-  if (action.kind === 'exchange') emit('exchange', action.id)
-  else if (action.kind === 'collect') emit('collect', action.id)
-  else if (action.kind === 'thunderstorm') emit('thunderstorm')
+  if (action.kind === 'exchange')
+    emit('exchange', action.id)
+  else if (action.kind === 'collect')
+    emit('collect', action.id)
+  else if (action.kind === 'thunderstorm')
+    emit('thunderstorm')
   else emit('unlock', action.id)
 }
 </script>
 
 <template>
   <section class="rain-page">
-    <div v-if="!activity" class="empty">当前账号未发现进行中的雨落成诗活动</div>
+    <div v-if="!activity" class="empty">
+      当前账号未发现进行中的雨落成诗活动
+    </div>
     <template v-else-if="mode === 'tasks'">
       <header class="hero">
         <div><small>限时气象活动</small><h2>{{ activity.name }}</h2><p>采集好友雷雨、召唤特殊天气，完成任务获得雷电徽章。</p></div>
@@ -183,52 +215,98 @@ function confirmAction() {
 
       <section class="card weather-card">
         <div><small>我的农场天气</small><h3>{{ activity.weather.known ? activity.weather.name : '状态未知' }}</h3><p>{{ !activity.weather.known ? '天气状态读取失败，请刷新后再操作。' : activity.weather.active ? '特殊天气正在持续，结束前不可重复召唤。' : '当前没有特殊天气，可以使用雷雨召唤瓶。' }}</p></div>
-        <button :disabled="busy || !activity.actions.thunderstorm.enabled" @click="confirmation = { kind: 'thunderstorm', id: '', title: '召唤雷雨', detail: '将消耗 1 个雷雨召唤瓶，在自己的农场召唤一场雷雨。' }">{{ pendingThunderstorm ? '使用中' : '使用召唤瓶' }}</button>
+        <button :disabled="busy || !activity.actions.thunderstorm.enabled" @click="confirmation = { kind: 'thunderstorm', id: '', title: '召唤雷雨', detail: '将消耗 1 个雷雨召唤瓶，在自己的农场召唤一场雷雨。' }">
+          {{ pendingThunderstorm ? '使用中' : '使用召唤瓶' }}
+        </button>
       </section>
 
       <section class="card">
-        <div class="card-title"><div><small>每日兑换</small><h3>天气采集瓶</h3></div><span>金豆豆兑换</span></div>
+        <div class="card-title">
+          <div><small>每日兑换</small><h3>天气采集瓶</h3></div><span>金豆豆兑换</span>
+        </div>
         <div v-for="goods in activity.exchangeItems" :key="goods.id" class="exchange-row">
-          <img v-if="imageFor(goods.item.id, goods.item.image)" :src="imageFor(goods.item.id, goods.item.image)" alt=""><span v-else class="item-placeholder" aria-hidden="true">?</span><div><strong>{{ displayName(goods.item) }}</strong><small>消耗 {{ goods.cost.count }} {{ displayName(goods.cost) }}</small></div><button :disabled="busy || !goods.available" @click="confirmation = { kind: 'exchange', id: goods.id, title: '兑换天气采集瓶', detail: `将消耗 ${goods.cost.count} ${displayName(goods.cost)}，兑换 ${goods.item.count} 个${displayName(goods.item)}。` }">{{ goods.owned ? '今日已兑' : pendingExchange ? '兑换中' : '兑换' }}</button>
+          <img v-if="imageFor(goods.item.id, goods.item.image)" :src="imageFor(goods.item.id, goods.item.image)" alt=""><span v-else class="item-placeholder" aria-hidden="true">?</span><div><strong>{{ displayName(goods.item) }}</strong><small>消耗 {{ goods.cost.count }} {{ displayName(goods.cost) }}</small></div><button :disabled="busy || !goods.available" @click="confirmation = { kind: 'exchange', id: goods.id, title: '兑换天气采集瓶', detail: `将消耗 ${goods.cost.count} ${displayName(goods.cost)}，兑换 ${goods.item.count} 个${displayName(goods.item)}。` }">
+            {{ goods.owned ? '今日已兑' : pendingExchange ? '兑换中' : '兑换' }}
+          </button>
         </div>
       </section>
 
       <section class="card">
-        <div class="card-title"><div><small>好友天气</small><h3>采集雷雨</h3></div><button class="text-button" :disabled="friendsLoading" @click="emit('refreshFriends')">刷新好友</button></div>
+        <div class="card-title">
+          <div><small>好友天气</small><h3>采集雷雨</h3></div><button class="text-button" :disabled="friendsLoading" @click="emit('refreshFriends')">
+            刷新好友
+          </button>
+        </div>
         <div class="friend-control">
-          <select v-model="selectedFriendGid" :disabled="busy || weatherLoading"><option value="" disabled>选择好友农场</option><option v-for="friend in friendRows" :key="friend.gid" :value="String(friend.gid)">{{ friendName(friend) }}</option></select>
-          <button :disabled="!selectedFriendGid || busy || weatherLoading" @click="emit('checkWeather', selectedFriendGid)">{{ weatherLoading ? '检查中' : '检查天气' }}</button>
+          <select v-model="selectedFriendGid" :disabled="busy || weatherLoading">
+            <option value="" disabled>
+              选择好友农场
+            </option><option v-for="friend in friendRows" :key="friend.gid" :value="String(friend.gid)">
+              {{ friendName(friend) }}
+            </option>
+          </select>
+          <button :disabled="!selectedFriendGid || busy || weatherLoading" @click="emit('checkWeather', selectedFriendGid)">
+            {{ weatherLoading ? '检查中' : '检查天气' }}
+          </button>
         </div>
-        <p v-if="weatherError" class="error">{{ weatherError }}</p>
+        <p v-if="weatherError" class="error">
+          {{ weatherError }}
+        </p>
         <div v-else-if="weatherCheck && weatherCheck.host.gid === selectedFriendGid" class="weather-result" :class="{ storm: weatherCheck.weather.thunderstorm }">
-          <div class="weather-result-main"><span>{{ weatherCheck.host.name }}</span><strong>{{ weatherCheck.weather.name }}</strong><small>{{ collectionStatus(weatherCheck.weather) }}</small></div>
-          <button :disabled="busy || !weatherCheck.weather.thunderstorm || !activity.actions.collect.enabled" @click="confirmation = { kind: 'collect', id: weatherCheck.host.gid, title: '采集好友雷雨', detail: `将在 ${weatherCheck.host.name} 的农场消耗 1 个天气采集瓶；成功后获得雷雨召唤瓶。` }">{{ collectionButtonLabel(weatherCheck.weather) }}</button>
+          <div class="weather-result-main">
+            <span>{{ weatherCheck.host.name }}</span><strong>{{ weatherCheck.weather.name }}</strong><small>{{ collectionStatus(weatherCheck.weather) }}</small>
+          </div>
+          <button :disabled="busy || !weatherCheck.weather.thunderstorm || !activity.actions.collect.enabled" @click="confirmation = { kind: 'collect', id: weatherCheck.host.gid, title: '采集好友雷雨', detail: `将在 ${weatherCheck.host.name} 的农场消耗 1 个天气采集瓶；成功后获得雷雨召唤瓶。` }">
+            {{ collectionButtonLabel(weatherCheck.weather) }}
+          </button>
         </div>
       </section>
 
       <section class="card">
-        <div class="card-title"><div><small>每日进度</small><h3>气象任务</h3></div><span>{{ activity.balances.badge }} 枚徽章</span></div>
-        <div v-for="(task, index) in activity.tasks" :key="task.id" class="task-row"><span :class="{ done: task.completed }">{{ task.completed ? '✓' : index + 1 }}</span><div><strong>{{ task.name }}</strong><small>{{ taskProgress(task) }} · 奖励 {{ displayName(task.reward) }} ×{{ task.reward.count }}</small></div></div>
+        <div class="card-title">
+          <div><small>每日进度</small><h3>气象任务</h3></div><span>{{ activity.balances.badge }} 枚徽章</span>
+        </div>
+        <div v-for="(task, index) in activity.tasks" :key="task.id" class="task-row">
+          <span :class="{ done: task.completed }">{{ task.completed ? '✓' : index + 1 }}</span><div><strong>{{ task.name }}</strong><small>{{ taskProgress(task) }} · 奖励 {{ displayName(task.reward) }} ×{{ task.reward.count }}</small></div>
+        </div>
       </section>
     </template>
 
     <template v-else>
-      <header class="hero research-hero"><div><small>研究与奖励</small><h2>雷电研究树</h2><p>先去“气象任务”获得雷电徽章，再按前置条件逐项解锁奖励。</p></div><strong>{{ activity.balances.known ? activity.balances.badge : '--' }} 枚</strong></header>
+      <header class="hero research-hero">
+        <div><small>研究与奖励</small><h2>雷电研究树</h2><p>先去“气象任务”获得雷电徽章，再按前置条件逐项解锁奖励。</p></div><strong>{{ activity.balances.known ? activity.balances.badge : '--' }} 枚</strong>
+      </header>
       <section class="next-step" :class="{ ready: nextResearchNode?.unlockable }">
         <div><small>已解锁 {{ completedResearchCount }}/{{ activity.researchNodes.length }}</small><strong>{{ researchRecommendation.title }}</strong><p>{{ researchRecommendation.detail }}</p></div>
-        <button v-if="researchRecommendation.goTasks" type="button" @click="emit('switchMode', 'tasks')">去气象任务</button>
+        <button v-if="researchRecommendation.goTasks" type="button" @click="emit('switchMode', 'tasks')">
+          去气象任务
+        </button>
       </section>
       <div class="research-tree">
         <article v-for="(node, index) in activity.researchNodes" :key="node.id" :class="{ claimed: node.claimed, available: node.unlockable }">
-          <div class="node-icon"><img v-if="imageFor(node.reward.id, node.reward.image)" :src="imageFor(node.reward.id, node.reward.image)" alt=""><span v-else class="item-placeholder" aria-hidden="true">?</span><span>第 {{ index + 1 }} 项</span></div>
-          <div class="node-info"><strong>{{ displayName(node.reward) }} <b>×{{ node.reward.count }}</b></strong><small>{{ researchStatus(node) }}</small><p>需要 {{ node.cost.count }} {{ displayName(node.cost) }}</p></div>
-          <button :disabled="busy || !node.unlockable" @click="confirmation = { kind: 'research', id: node.id, title: `解锁${displayName(node.reward)}`, detail: `将消耗 ${node.cost.count} ${displayName(node.cost)}，领取 ${displayName(node.reward)} ×${node.reward.count}。` }">{{ researchButtonLabel(node) }}</button>
+          <div class="node-icon">
+            <img v-if="imageFor(node.reward.id, node.reward.image)" :src="imageFor(node.reward.id, node.reward.image)" alt=""><span v-else class="item-placeholder" aria-hidden="true">?</span><span>第 {{ index + 1 }} 项</span>
+          </div>
+          <div class="node-info">
+            <strong>{{ displayName(node.reward) }} <b>×{{ node.reward.count }}</b></strong><small>{{ researchStatus(node) }}</small><p>需要 {{ node.cost.count }} {{ displayName(node.cost) }}</p>
+          </div>
+          <button :disabled="busy || !node.unlockable" @click="confirmation = { kind: 'research', id: node.id, title: `解锁${displayName(node.reward)}`, detail: `将消耗 ${node.cost.count} ${displayName(node.cost)}，领取 ${displayName(node.reward)} ×${node.reward.count}。` }">
+            {{ researchButtonLabel(node) }}
+          </button>
         </article>
       </div>
     </template>
 
     <div v-if="confirmation" class="confirm-mask" role="presentation" @click.self="confirmation = null">
-      <section class="confirm-dialog" role="dialog" aria-modal="true" :aria-label="confirmation.title"><h3>{{ confirmation.title }}</h3><p>{{ confirmation.detail }}</p><div><button class="cancel" :disabled="busy" @click="confirmation = null">取消</button><button :disabled="busy" @click="confirmAction">确认操作</button></div></section>
+      <section class="confirm-dialog" role="dialog" aria-modal="true" :aria-label="confirmation.title">
+        <h3>{{ confirmation.title }}</h3><p>{{ confirmation.detail }}</p><div>
+          <button class="cancel" :disabled="busy" @click="confirmation = null">
+            取消
+          </button><button :disabled="busy" @click="confirmAction">
+            确认操作
+          </button>
+        </div>
+      </section>
     </div>
   </section>
 </template>
@@ -275,7 +353,9 @@ function confirmAction() {
   color: #1d1d1f;
   letter-spacing: -0.02em;
 }
-.hero h2 { font-size: 22px; }
+.hero h2 {
+  font-size: 22px;
+}
 .hero p {
   max-width: 300px;
   margin: 0;
@@ -326,7 +406,10 @@ function confirmAction() {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.balances strong { color: #1d1d1f; font-size: 14px; }
+.balances strong {
+  color: #1d1d1f;
+  font-size: 14px;
+}
 .guide {
   margin-top: 10px;
   padding: 14px 15px;
@@ -345,8 +428,14 @@ function confirmAction() {
   cursor: pointer;
   list-style: none;
 }
-.guide summary::-webkit-details-marker { display: none; }
-.guide summary small { color: #8e8e93; font-size: 10px; font-weight: 500; }
+.guide summary::-webkit-details-marker {
+  display: none;
+}
+.guide summary small {
+  color: #8e8e93;
+  font-size: 10px;
+  font-weight: 500;
+}
 .guide ol {
   margin: 13px 0 8px;
   padding: 0;
@@ -354,7 +443,11 @@ function confirmAction() {
   gap: 10px;
   list-style: none;
 }
-.guide li { display: flex; align-items: center; gap: 10px; }
+.guide li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .guide li > b {
   width: 24px;
   height: 24px;
@@ -366,11 +459,25 @@ function confirmAction() {
   background: #007aff;
   font-size: 11px;
 }
-.guide li span { min-width: 0; display: grid; gap: 1px; }
-.guide li strong { font-size: 12px; }
+.guide li span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.guide li strong {
+  font-size: 12px;
+}
 .guide li small,
-.guide > p { color: #636366; font-size: 10px; line-height: 1.5; }
-.guide > p { margin: 10px 0 0; padding-top: 9px; border-top: 1px solid rgba(60, 60, 67, 0.1); }
+.guide > p {
+  color: #636366;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.guide > p {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid rgba(60, 60, 67, 0.1);
+}
 .status-chip {
   display: inline-block;
   padding: 1px 5px;
@@ -411,7 +518,9 @@ function confirmAction() {
   gap: 10px;
 }
 .card-title,
-.weather-card { justify-content: space-between; }
+.weather-card {
+  justify-content: space-between;
+}
 .card-title small,
 .node-info small,
 .task-row small {
@@ -441,7 +550,9 @@ button {
   font-weight: 650;
   cursor: pointer;
 }
-button:active:not(:disabled) { transform: scale(0.98); }
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
 button:disabled {
   color: #8e8e93;
   background: rgba(118, 118, 128, 0.12);
@@ -479,7 +590,9 @@ button:disabled {
   margin-top: 2px;
   color: #8e8e93;
 }
-.friend-control { margin-top: 10px; }
+.friend-control {
+  margin-top: 10px;
+}
 .friend-control select {
   min-width: 0;
   min-height: 36px;
@@ -497,7 +610,9 @@ button:disabled {
   border-radius: 13px;
   background: rgba(118, 118, 128, 0.08);
 }
-.weather-result.storm { background: rgba(0, 122, 255, 0.1); }
+.weather-result.storm {
+  background: rgba(0, 122, 255, 0.1);
+}
 .weather-result-main {
   min-width: 0;
   display: grid;
@@ -505,13 +620,20 @@ button:disabled {
   gap: 2px;
 }
 .weather-result-main span,
-.weather-result-main small { color: #636366; }
-.weather-result-main span { font-size: 10px; }
+.weather-result-main small {
+  color: #636366;
+}
+.weather-result-main span {
+  font-size: 10px;
+}
 .weather-result-main small {
   line-height: 1.35;
   font-size: 10px;
 }
-.error { color: #ff3b30; font-size: 11px; }
+.error {
+  color: #ff3b30;
+  font-size: 11px;
+}
 .task-row {
   padding: 10px 0;
   border-top: 1px solid rgba(60, 60, 67, 0.1);
@@ -531,7 +653,9 @@ button:disabled {
   color: #248a3d;
   background: rgba(52, 199, 89, 0.12);
 }
-.research-hero { align-items: center; }
+.research-hero {
+  align-items: center;
+}
 .research-hero > strong {
   padding: 7px 10px;
   border-radius: 999px;
@@ -556,11 +680,28 @@ button:disabled {
   border-color: rgba(52, 199, 89, 0.22);
   background: rgba(242, 255, 246, 0.9);
 }
-.next-step div { min-width: 0; display: grid; gap: 3px; }
-.next-step small { color: #007aff; font-size: 10px; font-weight: 650; }
-.next-step strong { font-size: 13px; }
-.next-step p { margin: 0; color: #636366; font-size: 10px; line-height: 1.45; }
-.next-step button { flex: none; }
+.next-step div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.next-step small {
+  color: #007aff;
+  font-size: 10px;
+  font-weight: 650;
+}
+.next-step strong {
+  font-size: 13px;
+}
+.next-step p {
+  margin: 0;
+  color: #636366;
+  font-size: 10px;
+  line-height: 1.45;
+}
+.next-step button {
+  flex: none;
+}
 .research-tree {
   display: grid;
   gap: 9px;
@@ -589,7 +730,10 @@ button:disabled {
   background: rgba(244, 255, 247, 0.82);
   opacity: 0.9;
 }
-.node-icon { position: relative; flex: none; }
+.node-icon {
+  position: relative;
+  flex: none;
+}
 .node-icon span {
   position: absolute;
   right: -5px;
@@ -602,7 +746,10 @@ button:disabled {
   font-weight: 650;
   white-space: nowrap;
 }
-.node-info strong b { color: #636366; font-size: 11px; }
+.node-info strong b {
+  color: #636366;
+  font-size: 11px;
+}
 .node-info p {
   margin: 4px 0 0;
   color: #b25000;
@@ -629,9 +776,20 @@ button:disabled {
   text-align: center;
   backdrop-filter: saturate(180%) blur(30px);
 }
-.confirm-dialog h3 { margin: 0 0 8px; font-size: 17px; }
-.confirm-dialog p { margin: 0 0 18px; color: #636366; line-height: 1.55; }
-.confirm-dialog div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.confirm-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+.confirm-dialog p {
+  margin: 0 0 18px;
+  color: #636366;
+  line-height: 1.55;
+}
+.confirm-dialog div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
 .confirm-dialog .cancel {
   color: #007aff;
   background: rgba(118, 118, 128, 0.12);
@@ -639,11 +797,27 @@ button:disabled {
 }
 
 @media (max-width: 370px) {
-  .rain-page { padding-right: 10px; padding-left: 10px; }
-  .balances { grid-template-columns: 1fr; }
-  .weather-card { align-items: flex-start; }
-  .friend-control { align-items: stretch; flex-direction: column; }
-  .research-tree article { gap: 8px; padding: 10px; }
-  .research-tree article > button { padding-right: 10px; padding-left: 10px; }
+  .rain-page {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+  .balances {
+    grid-template-columns: 1fr;
+  }
+  .weather-card {
+    align-items: flex-start;
+  }
+  .friend-control {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .research-tree article {
+    gap: 8px;
+    padding: 10px;
+  }
+  .research-tree article > button {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
 }
 </style>

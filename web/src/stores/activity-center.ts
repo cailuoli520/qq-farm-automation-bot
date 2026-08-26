@@ -446,15 +446,22 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     }
   }
 
-  function exchangeRainBottle(accountId: string, goodsId: string) { return mutate('rainExchange', '/rain-poetry/exchange', accountId, { goodsId, count: 1 }) }
+  function exchangeRainBottle(accountId: string, goodsId: string) {
+    return mutate('rainExchange', '/rain-poetry/exchange', accountId, { goodsId, count: 1 })
+  }
   async function collectRainWeather(accountId: string, friendGid: string) {
     const succeeded = await mutate('rainCollect', '/rain-poetry/collect', accountId, { friendGid })
     if (succeeded)
       clearRainWeather()
     return succeeded
   }
-  function useRainThunderstorm(accountId: string) { return mutate('rainThunderstorm', '/rain-poetry/thunderstorm/use', accountId) }
-  function unlockRainResearch(accountId: string, nodeId: string) { return mutate('rainResearch', '/rain-poetry/research/unlock', accountId, { nodeId }) }
+  function useRainThunderstorm(accountId: string) {
+    return mutate('rainThunderstorm', '/rain-poetry/thunderstorm/use', accountId)
+  }
+
+  function unlockRainResearch(accountId: string, nodeId: string) {
+    return mutate('rainResearch', '/rain-poetry/research/unlock', accountId, { nodeId })
+  }
 
   function lazyLoad(accountId: string) {
     return load(accountId, false)

@@ -6,18 +6,18 @@ export interface LogFilterOption {
 }
 
 const MODULE_LABELS: Record<string, string> = {
-  farm: '农场',
-  friend: '好友',
-  warehouse: '仓库',
-  task: '任务',
-  system: '系统',
-  activity: '活动',
+  'farm': '农场',
+  'friend': '好友',
+  'warehouse': '仓库',
+  'task': '任务',
+  'system': '系统',
+  'activity': '活动',
   'rain-poetry': '雨落成诗',
-  mall: '商城',
-  dog: '宠物',
+  'mall': '商城',
+  'dog': '宠物',
   'mystery-shop': '神秘商店',
-  push: '推送',
-  scheduler: '调度',
+  'push': '推送',
+  'scheduler': '调度',
 }
 
 const EVENT_LABELS: Record<string, string> = {
