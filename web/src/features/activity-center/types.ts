@@ -1,4 +1,5 @@
-export type ActivityTabKey = 'travel' | 'constellation' | 'shop' | 'solar' | 'qingmei' | 'qixi'
+export type ActivityEventKey = 'stellar' | 'rainPoetry' | 'qingmei' | 'qixi'
+export type ActivityTabKey = 'travel' | 'constellation' | 'shop' | 'solar' | 'rainTasks' | 'rainResearch' | 'qingmei' | 'qixi'
 export type ActivityVariant = 'blue' | 'violet' | 'gold' | 'green'
 export type ActivityRecord = Record<string, unknown>
 
@@ -205,6 +206,7 @@ export interface QingMeiActivityDto {
   name: string
   startTime: number | null
   endTime: number | null
+  serverTime: number | null
   ingredient: ActivityItemDto
   ingredients: QingMeiIngredientDto[]
   balance: string
@@ -278,6 +280,40 @@ export interface QixiDewTargetsDto {
   serverValidationRequired: boolean
 }
 
+export interface RainWeatherDto {
+  known: boolean
+  weatherId: string
+  type: string
+  name: string
+  startTime: number | null
+  endTime: number | null
+  active: boolean
+  thunderstorm: boolean
+}
+
+export interface RainPoetryActivityDto {
+  groupId: string
+  activityId: string
+  name: string
+  startTime: number | null
+  endTime: number | null
+  serverTime: number | null
+  active: boolean
+  rules: ActivityRulesDto
+  balances: { goldBean: string, badge: string, collectionBottle: string, thunderstormBottle: string, known: boolean }
+  items: { goldBean: ActivityItemDto, badge: ActivityItemDto, collectionBottle: ActivityItemDto, thunderstormBottle: ActivityItemDto }
+  weather: RainWeatherDto
+  exchangeItems: Array<{ id: string, item: ActivityItemDto, cost: ActivityItemDto, owned: boolean, available: boolean }>
+  tasks: Array<{ id: string, name: string, itemId: string, progress: string, target: string, reward: ActivityItemDto, completed: boolean }>
+  researchNodes: Array<{ id: string, prerequisites: string[], statusCode: string, claimed: boolean, unlockable: boolean, cost: ActivityItemDto, reward: ActivityItemDto, premium: boolean, premiumValue: string }>
+  actions: { exchange: ActivityActionDto, collect: ActivityActionDto, thunderstorm: ActivityActionDto, research: ActivityActionDto }
+}
+
+export interface RainWeatherCheckDto {
+  host: { gid: string, name: string, avatarUrl: string, isSelf: boolean }
+  weather: RainWeatherDto
+}
+
 export interface ActivityActionDto {
   enabled: boolean
   available: boolean
@@ -295,6 +331,10 @@ export interface ActivityActionsDto {
   qixiBridge: ActivityActionDto
   qixiGift: ActivityActionDto
   qixiDew: ActivityActionDto
+  rainExchange: ActivityActionDto
+  rainCollect: ActivityActionDto
+  rainThunderstorm: ActivityActionDto
+  rainResearch: ActivityActionDto
 }
 
 export interface ActivityCenterSnapshotDto {
@@ -304,6 +344,7 @@ export interface ActivityCenterSnapshotDto {
   constellation: ConstellationDto | null
   qingMei: QingMeiActivityDto | null
   qixi: QixiActivityDto | null
+  rainPoetry: RainPoetryActivityDto | null
   actions: ActivityActionsDto
   errors: {
     season: string | null
@@ -311,7 +352,8 @@ export interface ActivityCenterSnapshotDto {
     solarTerms: string | null
     qingMei: string | null
     qixi: string | null
+    rainPoetry: string | null
   }
 }
 
-export type ActivityMutationKey = 'claimPass' | 'lightConstellation' | 'claimSolar' | 'exchange' | 'qingMeiSeed' | 'qingMeiStart' | 'qingMeiContinue' | 'qingMeiSettle' | 'qixiBridge' | 'qixiGift' | 'qixiDew'
+export type ActivityMutationKey = 'claimPass' | 'lightConstellation' | 'claimSolar' | 'exchange' | 'qingMeiSeed' | 'qingMeiStart' | 'qingMeiContinue' | 'qingMeiSettle' | 'qixiBridge' | 'qixiGift' | 'qixiDew' | 'rainExchange' | 'rainCollect' | 'rainThunderstorm' | 'rainResearch'

@@ -48,3 +48,11 @@ export async function fetchQixiDewTargetsRequest(accountId: string, hostGid = ''
   })
   return responsePayload(response.data)
 }
+
+export async function fetchRainWeatherRequest(accountId: string, friendGid: string): Promise<unknown> {
+  const response = await api.get('/api/activity-center/rain-poetry/weather', {
+    ...requestOptions(accountId),
+    params: { friendGid },
+  })
+  return responsePayload(response.data)
+}

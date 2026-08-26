@@ -11,6 +11,8 @@ import type {
   QingMeiActivityDto,
   QixiActivityDto,
   QixiDewTargetsDto,
+  RainPoetryActivityDto,
+  RainWeatherCheckDto,
   SeasonDto,
   ShopDto,
   SolarTermsDto,
@@ -453,6 +455,7 @@ export function normalizeActivitySnapshot(value: unknown): ActivityCenterSnapsho
     constellation: normalizeConstellation(first(root.constellation, root.constellationActivity, seasonRecord.constellation, seasonRecord.constellationActivity, seasonRecord.starContract, seasonRecord.contract)),
     qingMei: normalizeQingMei(first(root.qingMei, root.qingmei, root.qing_mei)),
     qixi: normalizeQixi(first(root.qixi, root.qixiActivity, root.qixi_activity)),
+    rainPoetry: normalizeRainPoetry(first(root.rainPoetry, root.rain_poetry)),
     actions: {
       claimPass: normalizeAction(actionsRaw, capabilitiesRaw, ['claimPass', 'passClaim', 'pass_claim']),
       lightConstellation: normalizeAction(actionsRaw, capabilitiesRaw, ['lightConstellation', 'constellationLight', 'constellation_light']),
@@ -461,6 +464,10 @@ export function normalizeActivitySnapshot(value: unknown): ActivityCenterSnapsho
       qixiBridge: normalizeAction(actionsRaw, capabilitiesRaw, ['qixiBridge', 'qixi_bridge']),
       qixiGift: normalizeAction(actionsRaw, capabilitiesRaw, ['qixiGift', 'qixi_gift']),
       qixiDew: normalizeAction(actionsRaw, capabilitiesRaw, ['qixiDew', 'qixi_dew']),
+      rainExchange: normalizeAction(actionsRaw, capabilitiesRaw, ['rainExchange', 'rain_exchange']),
+      rainCollect: normalizeAction(actionsRaw, capabilitiesRaw, ['rainCollect', 'rain_collect']),
+      rainThunderstorm: normalizeAction(actionsRaw, capabilitiesRaw, ['rainThunderstorm', 'rain_thunderstorm']),
+      rainResearch: normalizeAction(actionsRaw, capabilitiesRaw, ['rainResearch', 'rain_research']),
     },
     errors: {
       season: text(errorsRaw.season) || null,
@@ -468,7 +475,98 @@ export function normalizeActivitySnapshot(value: unknown): ActivityCenterSnapsho
       solarTerms: text(errorsRaw.solarTerms, errorsRaw.solar_terms) || null,
       qingMei: text(errorsRaw.qingMei, errorsRaw.qingmei, errorsRaw.qing_mei) || null,
       qixi: text(errorsRaw.qixi) || null,
+      rainPoetry: text(errorsRaw.rainPoetry, errorsRaw.rain_poetry) || null,
     },
+  }
+}
+
+function normalizeRainWeather(value: unknown) {
+  const raw = record(value)
+  return {
+    known: raw.known === undefined ? true : bool(raw.known),
+    weatherId: text(raw.weatherId, raw.weather_id),
+    type: text(raw.type, raw.weatherType, raw.weather_type),
+    name: text(raw.name, '晴朗'),
+    startTime: toMilliseconds(first(raw.startTime, raw.start_time)),
+    endTime: toMilliseconds(first(raw.endTime, raw.end_time)),
+    active: bool(raw.active),
+    thunderstorm: bool(raw.thunderstorm),
+  }
+}
+
+function normalizeRainPoetry(value: unknown): RainPoetryActivityDto | null {
+  if (!isRecord(value))
+    return null
+  const raw = value
+  const balances = record(raw.balances)
+  const items = record(raw.items)
+  const actions = record(raw.actions)
+  return {
+    groupId: text(raw.groupId, raw.group_id),
+    activityId: text(raw.activityId, raw.activity_id),
+    name: text(raw.name, '雨落成诗'),
+    startTime: toMilliseconds(first(raw.startTime, raw.start_time)),
+    endTime: toMilliseconds(first(raw.endTime, raw.end_time)),
+    serverTime: toMilliseconds(first(raw.serverTime, raw.server_time)),
+    active: bool(raw.active),
+    rules: normalizeRules(raw.rules),
+    balances: {
+      goldBean: text(balances.goldBean, balances.gold_bean, '0'),
+      badge: text(balances.badge, '0'),
+      collectionBottle: text(balances.collectionBottle, balances.collection_bottle, '0'),
+      thunderstormBottle: text(balances.thunderstormBottle, balances.thunderstorm_bottle, '0'),
+      known: balances.known === undefined ? true : bool(balances.known),
+    },
+    items: {
+      goldBean: normalizeItem(first(items.goldBean, items.gold_bean)),
+      badge: normalizeItem(items.badge),
+      collectionBottle: normalizeItem(first(items.collectionBottle, items.collection_bottle)),
+      thunderstormBottle: normalizeItem(first(items.thunderstormBottle, items.thunderstorm_bottle)),
+    },
+    weather: normalizeRainWeather(raw.weather),
+    exchangeItems: records(first(raw.exchangeItems, raw.exchange_items)).map(entry => ({
+      id: text(entry.id),
+      item: normalizeItem(entry.item),
+      cost: normalizeItem(entry.cost),
+      owned: bool(entry.owned),
+      available: bool(entry.available),
+    })),
+    tasks: records(raw.tasks).map(entry => ({
+      id: text(entry.id),
+      name: text(entry.name),
+      itemId: text(entry.itemId, entry.item_id),
+      progress: text(entry.progress, '0'),
+      target: text(entry.target, '0'),
+      reward: normalizeItem(entry.reward),
+      completed: bool(entry.completed),
+    })),
+    researchNodes: records(first(raw.researchNodes, raw.research_nodes)).map(entry => ({
+      id: text(entry.id),
+      prerequisites: Array.isArray(entry.prerequisites) ? entry.prerequisites.map(String) : [],
+      statusCode: text(entry.statusCode, entry.status_code),
+      claimed: bool(entry.claimed),
+      unlockable: bool(entry.unlockable),
+      cost: normalizeItem(entry.cost),
+      reward: normalizeItem(entry.reward),
+      premium: bool(entry.premium),
+      premiumValue: text(entry.premiumValue, entry.premium_value),
+    })),
+    actions: {
+      exchange: normalizeAction(actions, {}, ['exchange']),
+      collect: normalizeAction(actions, {}, ['collect']),
+      thunderstorm: normalizeAction(actions, {}, ['thunderstorm']),
+      research: normalizeAction(actions, {}, ['research']),
+    },
+  }
+}
+
+export function normalizeRainWeatherCheck(value: unknown): RainWeatherCheckDto | null {
+  if (!isRecord(value))
+    return null
+  const host = record(value.host)
+  return {
+    host: { gid: text(host.gid), name: text(host.name), avatarUrl: text(host.avatarUrl, host.avatar_url), isSelf: bool(host.isSelf, host.is_self) },
+    weather: normalizeRainWeather(value.weather),
   }
 }
 
@@ -592,6 +690,7 @@ function normalizeQingMei(value: unknown): QingMeiActivityDto | null {
     name: text(raw.name, '青酿换万金'),
     startTime: toMilliseconds(first(raw.startTime, raw.start_time)),
     endTime: toMilliseconds(first(raw.endTime, raw.end_time)),
+    serverTime: toMilliseconds(first(raw.serverTime, raw.server_time)),
     ingredient: normalizeItem(raw.ingredient),
     ingredients: records(raw.ingredients).map(item => ({ ...normalizeItem(item), uid: text(item.uid), mutantTypes: Array.isArray(item.mutantTypes) ? item.mutantTypes.map(String) : [] })).filter(item => item.uid),
     balance: text(raw.balance, '0'),
@@ -649,6 +748,15 @@ const activityErrorMessages: Record<string, string> = {
   QIXI_DEW_HOST_MISMATCH: '进入的农场与所选好友不一致，请刷新后重试',
   QIXI_DEW_TARGET_UNAVAILABLE: '所选地块已不再可用，请刷新后重选',
   QIXI_DEW_NO_EFFECT: '该地块未触发灵露效果，作物品级或状态可能不符合条件',
+  RAIN_POETRY_UNAVAILABLE: '雨落成诗活动暂未开放或已经结束',
+  INVALID_RAIN_FRIEND_GID: '好友信息无效，请重新选择',
+  RAIN_FRIEND_MISMATCH: '进入的农场与所选好友不一致，请刷新后重试',
+  RAIN_WEATHER_UNAVAILABLE: '该好友农场当前不是雷雨天气',
+  RAIN_COLLECT_UNAVAILABLE: '背包中没有可用的天气采集瓶',
+  RAIN_THUNDERSTORM_UNAVAILABLE: '当前已有特殊天气，或背包中没有雷雨召唤瓶',
+  RAIN_EXCHANGE_UNAVAILABLE: '该天气瓶当前不可兑换',
+  RAIN_RESEARCH_UNAVAILABLE: '该研究节点尚不可解锁或雷电徽章不足',
+  RAIN_RESPONSE_INVALID: '雨落成诗活动状态已经变化，请刷新后重试',
   SEASON_UNAVAILABLE: '当前活动数据暂未开放，请稍后刷新重试',
   INVALID_SOLAR_TERM: '节令信息已失效，请刷新页面后重试',
   ACCOUNT_OFFLINE: '当前账号尚未运行，请先启动账号后再试',

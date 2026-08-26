@@ -7,16 +7,19 @@ import type {
   QingMeiActivityDto,
   QixiActivityDto,
   QixiDewTargetsDto,
+  RainPoetryActivityDto,
+  RainWeatherCheckDto,
 } from '@/features/activity-center/types'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { fetchActivitySnapshot, fetchQixiDewTargetsRequest, postActivityMutation } from '@/features/activity-center/api'
+import { fetchActivitySnapshot, fetchQixiDewTargetsRequest, fetchRainWeatherRequest, postActivityMutation } from '@/features/activity-center/api'
 import {
   errorMessage,
   first,
   normalizeActivitySnapshot,
   normalizeItem,
   normalizeQixiDewTargets,
+  normalizeRainWeatherCheck,
   record,
   records,
   text,
@@ -45,10 +48,18 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     qixiBridge: false,
     qixiGift: false,
     qixiDew: false,
+    rainExchange: false,
+    rainCollect: false,
+    rainThunderstorm: false,
+    rainResearch: false,
   })
   const dewTargets = ref<QixiDewTargetsDto | null>(null)
   const dewTargetsLoading = ref(false)
   const dewTargetsError = ref('')
+  const rainWeatherCheck = ref<RainWeatherCheckDto | null>(null)
+  const rainWeatherLoading = ref(false)
+  const rainWeatherError = ref('')
+  let rainWeatherRequestVersion = 0
   let dewTargetsRequestVersion = 0
   let loadInFlight: { accountId: string, promise: Promise<boolean> } | null = null
 
@@ -59,6 +70,7 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
   const constellation = computed(() => snapshot.value.constellation)
   const qingMei = computed(() => snapshot.value.qingMei)
   const qixi = computed(() => snapshot.value.qixi)
+  const rainPoetry = computed(() => snapshot.value.rainPoetry)
   const actions = computed(() => snapshot.value.actions)
   const serverNow = computed(() => Date.now() + serverClockOffset.value)
   const tabBadges = computed<Partial<Record<ActivityTabKey, boolean>>>(() => ({
@@ -67,11 +79,14 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     solar: actions.value.claimSolar.available,
     qingmei: !!qingMei.value && (!qingMei.value.dailySeed.claimed || qingMei.value.actions.continue.available || qingMei.value.actions.settle.available),
     qixi: !!qixi.value && (qixi.value.actions.bridge.available || qixi.value.actions.gift.available || qixi.value.actions.dew.available),
+    rainTasks: !!rainPoetry.value && (rainPoetry.value.actions.exchange.available || rainPoetry.value.actions.collect.available || rainPoetry.value.actions.thunderstorm.available),
+    rainResearch: !!rainPoetry.value?.actions.research.available,
   }))
 
   function reset() {
     requestVersion.value += 1
     dewTargetsRequestVersion += 1
+    rainWeatherRequestVersion += 1
     loadInFlight = null
     snapshot.value = normalizeActivitySnapshot({})
     loading.value = false
@@ -84,7 +99,10 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     dewTargets.value = null
     dewTargetsLoading.value = false
     dewTargetsError.value = ''
-    pendingActions.value = { claimPass: false, lightConstellation: false, claimSolar: false, exchange: false, qingMeiSeed: false, qingMeiStart: false, qingMeiContinue: false, qingMeiSettle: false, qixiBridge: false, qixiGift: false, qixiDew: false }
+    rainWeatherCheck.value = null
+    rainWeatherLoading.value = false
+    rainWeatherError.value = ''
+    pendingActions.value = { claimPass: false, lightConstellation: false, claimSolar: false, exchange: false, qingMeiSeed: false, qingMeiStart: false, qingMeiContinue: false, qingMeiSettle: false, qixiBridge: false, qixiGift: false, qixiDew: false, rainExchange: false, rainCollect: false, rainThunderstorm: false, rainResearch: false }
   }
 
   function isCurrent(version: number, accountId: string) {
@@ -119,6 +137,10 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     }
   }
 
+  function disableRainActions(activity: RainPoetryActivityDto): RainPoetryActivityDto {
+    return { ...activity, actions: { exchange: disabledAction(activity.actions.exchange), collect: disabledAction(activity.actions.collect), thunderstorm: disabledAction(activity.actions.thunderstorm), research: disabledAction(activity.actions.research) } }
+  }
+
   function preserveQingMeiAfterUnknownMutation() {
     if (snapshot.value.qingMei) {
       snapshot.value = {
@@ -145,10 +167,28 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     return '鹊桥操作已提交，但最新状态暂未取回，请点击右上角刷新确认，不要重复操作'
   }
 
-  function applySnapshot(value: unknown, clientStartedAt = Date.now(), preserveFailedActivity: 'qingMei' | 'qixi' | null = null) {
+  function preserveRainAfterUnknownMutation() {
+    if (snapshot.value.rainPoetry) {
+      snapshot.value = {
+        ...snapshot.value,
+        rainPoetry: disableRainActions(snapshot.value.rainPoetry),
+        actions: {
+          ...snapshot.value.actions,
+          rainExchange: disabledAction(snapshot.value.actions.rainExchange),
+          rainCollect: disabledAction(snapshot.value.actions.rainCollect),
+          rainThunderstorm: disabledAction(snapshot.value.actions.rainThunderstorm),
+          rainResearch: disabledAction(snapshot.value.actions.rainResearch),
+        },
+      }
+    }
+    return '雨落成诗操作已提交，但最新状态暂未取回，请点击右上角刷新确认，不要重复操作'
+  }
+
+  function applySnapshot(value: unknown, clientStartedAt = Date.now(), preserveFailedActivity: 'qingMei' | 'qixi' | 'rainPoetry' | null = null) {
     const previousConstellation = snapshot.value.constellation
     const previousQingMei = snapshot.value.qingMei
     const previousQixi = snapshot.value.qixi
+    const previousRain = snapshot.value.rainPoetry
     const normalized = normalizeActivitySnapshot(value)
     let warning = ''
     if (!normalized.constellation && normalized.errors.season && previousConstellation)
@@ -165,8 +205,16 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
       normalized.actions.qixiDew = disabledAction(normalized.actions.qixiDew)
       warning = '鹊桥操作已提交，但最新状态暂未取回，请点击右上角刷新确认，不要重复操作'
     }
+    if (!normalized.rainPoetry && normalized.errors.rainPoetry && previousRain && preserveFailedActivity === 'rainPoetry') {
+      normalized.rainPoetry = disableRainActions(previousRain)
+      normalized.actions.rainExchange = disabledAction(normalized.actions.rainExchange)
+      normalized.actions.rainCollect = disabledAction(normalized.actions.rainCollect)
+      normalized.actions.rainThunderstorm = disabledAction(normalized.actions.rainThunderstorm)
+      normalized.actions.rainResearch = disabledAction(normalized.actions.rainResearch)
+      warning = '雨落成诗操作已提交，但最新状态暂未取回，请点击右上角刷新确认，不要重复操作'
+    }
     snapshot.value = normalized
-    const serverTime = [normalized.season?.serverTime, normalized.shop?.serverTime, normalized.solarTerms?.serverTime, normalized.constellation?.serverTime, normalized.qixi?.serverTime]
+    const serverTime = [normalized.season?.serverTime, normalized.shop?.serverTime, normalized.solarTerms?.serverTime, normalized.constellation?.serverTime, normalized.qingMei?.serverTime, normalized.qixi?.serverTime, normalized.rainPoetry?.serverTime]
       .find(value => value !== null && value !== undefined)
     if (serverTime !== undefined && serverTime !== null)
       serverClockOffset.value = serverTime - Math.round((clientStartedAt + Date.now()) / 2)
@@ -245,7 +293,7 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
       const resultRecord = record(result)
       const mutationSnapshot = first(resultRecord.snapshot, resultRecord.activityCenter, resultRecord.activity_center)
       const mutationSnapshotError = text(resultRecord.snapshotError, resultRecord.snapshot_error)
-      const mutationActivity = key.startsWith('qingMei') ? 'qingMei' : key.startsWith('qixi') ? 'qixi' : null
+      const mutationActivity = key.startsWith('qingMei') ? 'qingMei' : key.startsWith('qixi') ? 'qixi' : key.startsWith('rain') ? 'rainPoetry' : null
       let snapshotWarning = ''
       if (mutationSnapshot) {
         snapshotWarning = applySnapshot(mutationSnapshot, Date.now(), mutationActivity)
@@ -253,7 +301,7 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
       else if (mutationActivity && mutationSnapshotError) {
         snapshotWarning = mutationActivity === 'qingMei'
           ? preserveQingMeiAfterUnknownMutation()
-          : preserveQixiAfterUnknownMutation()
+          : mutationActivity === 'qixi' ? preserveQixiAfterUnknownMutation() : preserveRainAfterUnknownMutation()
       }
       else {
         await load(requestedAccountId, true)
@@ -361,6 +409,48 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     return succeeded
   }
 
+  function clearRainWeather() {
+    rainWeatherRequestVersion += 1
+    rainWeatherCheck.value = null
+    rainWeatherLoading.value = false
+    rainWeatherError.value = ''
+  }
+
+  async function checkRainWeather(accountId: string, friendGid: string) {
+    const version = ++rainWeatherRequestVersion
+    rainWeatherLoading.value = true
+    rainWeatherError.value = ''
+    rainWeatherCheck.value = null
+    try {
+      const result = normalizeRainWeatherCheck(await fetchRainWeatherRequest(accountId, friendGid))
+      if (version !== rainWeatherRequestVersion)
+        return false
+      rainWeatherCheck.value = result
+      if (!result)
+        rainWeatherError.value = '未能读取好友天气'
+      return !!result
+    }
+    catch (weatherError) {
+      if (version === rainWeatherRequestVersion)
+        rainWeatherError.value = errorMessage(weatherError, '检查好友天气失败')
+      return false
+    }
+    finally {
+      if (version === rainWeatherRequestVersion)
+        rainWeatherLoading.value = false
+    }
+  }
+
+  function exchangeRainBottle(accountId: string, goodsId: string) { return mutate('rainExchange', '/rain-poetry/exchange', accountId, { goodsId, count: 1 }) }
+  async function collectRainWeather(accountId: string, friendGid: string) {
+    const succeeded = await mutate('rainCollect', '/rain-poetry/collect', accountId, { friendGid })
+    if (succeeded)
+      clearRainWeather()
+    return succeeded
+  }
+  function useRainThunderstorm(accountId: string) { return mutate('rainThunderstorm', '/rain-poetry/thunderstorm/use', accountId) }
+  function unlockRainResearch(accountId: string, nodeId: string) { return mutate('rainResearch', '/rain-poetry/research/unlock', accountId, { nodeId }) }
+
   function lazyLoad(accountId: string) {
     return load(accountId, false)
   }
@@ -378,6 +468,7 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     constellation,
     qingMei,
     qixi,
+    rainPoetry,
     actions,
     tabBadges,
     loading,
@@ -392,6 +483,9 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     dewTargets,
     dewTargetsLoading,
     dewTargetsError,
+    rainWeatherCheck,
+    rainWeatherLoading,
+    rainWeatherError,
     lazyLoad,
     refresh,
     claimPass,
@@ -407,6 +501,12 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     fetchQixiDewTargets,
     clearQixiDewTargets,
     useQixiDew,
+    checkRainWeather,
+    clearRainWeather,
+    exchangeRainBottle,
+    collectRainWeather,
+    useRainThunderstorm,
+    unlockRainResearch,
     reset,
   }
 })

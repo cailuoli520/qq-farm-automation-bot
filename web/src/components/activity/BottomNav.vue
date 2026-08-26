@@ -16,13 +16,18 @@ defineEmits<{
 </script>
 
 <template>
-  <nav class="activity-nav" aria-label="活动页面" :style="{ gridTemplateColumns: `repeat(${Math.max(1, props.items.length)}, minmax(0, 1fr))` }">
+  <nav
+    class="activity-nav"
+    aria-label="活动页面"
+    :data-theme="props.items.every(item => item.theme === 'rain') ? 'rain' : undefined"
+    :style="{ gridTemplateColumns: `repeat(${Math.max(1, props.items.length)}, minmax(0, 1fr))` }"
+  >
     <button
       v-for="item in props.items"
       :key="item.key"
       type="button"
       :class="`activity-nav__item--${item.key}`"
-      :aria-label="item.label"
+      :aria-label="badges[item.key] && item.theme === 'rain' ? `${item.label}，有可操作内容` : item.label"
       :aria-current="modelValue === item.key ? 'page' : undefined"
       :data-active="modelValue === item.key || undefined"
       @click="$emit('update:modelValue', item.key)"
@@ -30,9 +35,13 @@ defineEmits<{
       <span class="activity-nav__visual">
         <span v-if="item.key === 'qingmei'" class="activity-nav__qingmei" aria-hidden="true">🍶</span>
         <span v-else-if="item.key === 'qixi'" class="activity-nav__qixi" aria-hidden="true">🌉</span>
+        <span v-else-if="item.key === 'rainTasks'" class="activity-nav__rain" aria-hidden="true">🌧️</span>
+        <span v-else-if="item.key === 'rainResearch'" class="activity-nav__rain" aria-hidden="true">⚡</span>
         <img v-else :src="`/activity-center/stellar/nav-${item.key}.png`" alt="">
-        <i v-if="badges[item.key]" class="activity-nav__badge" aria-label="有可操作内容" />
+        <span v-if="badges[item.key] && item.theme === 'rain'" class="activity-nav__badge-label" aria-hidden="true">可操作</span>
+        <i v-else-if="badges[item.key]" class="activity-nav__badge" aria-label="有可操作内容" />
       </span>
+      <span v-if="item.theme === 'rain'" class="activity-nav__label">{{ item.label }}</span>
     </button>
   </nav>
 </template>
@@ -101,6 +110,26 @@ button {
   line-height: 1;
   filter: drop-shadow(0 2px 3px rgba(83, 42, 74, 0.45));
 }
+.activity-nav__rain {
+  margin-top: 6px;
+  font-size: 30px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 3px rgba(20, 66, 78, 0.55));
+}
+.activity-nav__label {
+  position: absolute;
+  right: 4px;
+  bottom: 5px;
+  left: 4px;
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .activity-nav__visual {
   position: relative;
@@ -159,5 +188,53 @@ button[data-active] .activity-nav__visual img {
   border-radius: 50%;
   background: #ff4058;
   box-shadow: 0 1px 4px rgba(120, 0, 15, 0.55);
+}
+.activity-nav__badge-label {
+  position: absolute;
+  top: 0;
+  left: calc(50% + 7px);
+  padding: 2px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  color: #d92d20;
+  background: #fff0ef;
+  box-shadow: 0 1px 5px rgba(120, 0, 15, 0.14);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.activity-nav[data-theme='rain'] {
+  height: calc(68px + env(safe-area-inset-bottom));
+  padding: 3px 8px env(safe-area-inset-bottom);
+  border-top: 1px solid rgba(60, 60, 67, 0.16);
+  background: rgba(248, 250, 252, 0.86);
+  box-shadow: 0 -10px 30px rgba(28, 45, 59, 0.08);
+  backdrop-filter: saturate(180%) blur(24px);
+}
+.activity-nav[data-theme='rain'] button {
+  color: #8e8e93;
+}
+.activity-nav[data-theme='rain'] button[data-active] {
+  color: #007aff;
+}
+.activity-nav[data-theme='rain'] .activity-nav__visual {
+  height: 45px;
+}
+.activity-nav[data-theme='rain'] .activity-nav__visual::before {
+  top: 2px;
+  width: 40px;
+  height: 40px;
+  background: rgba(0, 122, 255, 0.1);
+}
+.activity-nav[data-theme='rain'] .activity-nav__rain {
+  filter: grayscale(1) opacity(0.64);
+  transition: filter 0.16s ease, transform 0.16s ease;
+}
+.activity-nav[data-theme='rain'] button[data-active] .activity-nav__rain {
+  filter: none;
+  transform: scale(1.06);
 }
 </style>
