@@ -297,17 +297,19 @@ async function socket(host: string, port: number, timeout = 3e4): Promise<{
     socketError = error;
   });
   await new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onError: (error: Error) => void;
     const onConnect = (): void => {
       clearTimeout(timer);
       s.off("error", onError);
       resolve();
     };
-    const onError = (error: Error): void => {
+    onError = (error: Error): void => {
       clearTimeout(timer);
       s.off("connect", onConnect);
       reject(error);
     };
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       s.off("connect", onConnect);
       s.off("error", onError);
       s.destroy();
@@ -339,6 +341,8 @@ async function socket(host: string, port: number, timeout = 3e4): Promise<{
     take,
     send: (data: Uint8Array) => new Promise<void>((resolve, reject) => {
       let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onError: (error: Error) => void;
       const finish = (error?: Error | null): void => {
         if (settled) return;
         settled = true;
@@ -347,8 +351,8 @@ async function socket(host: string, port: number, timeout = 3e4): Promise<{
         if (error) reject(error);
         else resolve();
       };
-      const onError = (error: Error): void => finish(error);
-      const timer = setTimeout(() => {
+      onError = (error: Error): void => finish(error);
+      timer = setTimeout(() => {
         s.destroy();
         finish(new Error("socket write timeout"));
       }, timeout);
