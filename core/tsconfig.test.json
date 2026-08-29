@@ -3,7 +3,8 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "strict": false
+    "strict": false,
+    "tsBuildInfoFile": "node_modules/.cache/tsconfig.test.tsbuildinfo"
   },
   "include": [
     "test/**/*.ts",
