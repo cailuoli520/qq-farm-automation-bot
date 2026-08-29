@@ -125,22 +125,12 @@ async function submitManual() {
 
   let payload: any = {}
   if (props.editData) {
-    const onlyNameChanged = form.name !== props.editData.name
-      && form.code === (props.editData.code || '')
-      && form.platform === (props.editData.platform || 'qq')
-
-    if (onlyNameChanged) {
-      payload = { id: props.editData.id, name: form.name }
-    }
-    else {
-      payload = {
-        id: props.editData.id,
-        name: form.name,
-        code,
-        platform: form.platform,
-        loginType: 'manual',
-      }
-    }
+    const codeChanged = code !== String(props.editData.code || '').trim()
+    payload = codeChanged
+      ? { id: props.editData.id, code, loginType: 'manual' }
+      : { id: props.editData.id, name: form.name }
+    if (codeChanged && form.name !== (props.editData.name || ''))
+      payload.name = form.name
   }
   else {
     payload = {
@@ -152,6 +142,7 @@ async function submitManual() {
   }
 
   if (form.platform === 'wx' && wxLoginStore.wxid && wxLoginStore.uuid) {
+    payload.platform = 'wx'
     payload.loginType = 'wx_qr'
     payload.wxid = wxLoginStore.wxid
     payload.wxSessionId = wxLoginStore.uuid
@@ -177,7 +168,7 @@ function close() {
   emit('close')
 }
 
-watch(() => props.show, (newVal) => {
+watch([() => props.show, () => props.editData], ([newVal]) => {
   if (newVal) {
     errorMessage.value = ''
     if (props.editData) {
@@ -199,7 +190,7 @@ watch(() => props.show, (newVal) => {
     stopWxCheck()
     wxLoginStore.resetState()
   }
-})
+}, { immediate: true })
 
 watch(activeTab, (tab) => {
   if (tab === 'wx') {
@@ -312,7 +303,24 @@ watch(activeTab, (tab) => {
             :rows="3"
           />
 
-          <div v-if="!editData" class="flex gap-4">
+          <div
+            v-if="editData"
+            class="rounded-lg px-3 py-2 text-sm"
+            :style="{
+              color: 'var(--theme-text)',
+              background: 'color-mix(in srgb, var(--theme-text) 6%, transparent)',
+            }"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <span class="opacity-60">登录平台</span>
+              <span class="font-medium">{{ form.platform === 'wx' ? '微信小程序' : 'QQ小程序' }}</span>
+            </div>
+            <p class="mt-1 text-xs opacity-55">
+              手动更新 Code 不会切换平台；需要换绑微信时请使用“微信扫码”。
+            </p>
+          </div>
+
+          <div v-else class="flex gap-4">
             <label class="flex cursor-pointer items-center gap-2">
               <input
                 v-model="form.platform"

@@ -130,6 +130,19 @@ function registerAccountRoutes(options: AccountRouteOptions): void {
             delete payload.loginBuffer;
             delete payload.refreshtoken;
             delete payload.accesstoken;
+            const existingAccount = isUpdate
+                ? (provider.getAccounts().accounts || []).find((account: DynamicRecord) => account.id === payload.id)
+                : null;
+
+            // 手动填码只负责更新登录 Code/备注，不能隐式切换账号平台或覆盖微信绑定。
+            // 兼容仍会提交表单默认值的旧前端，避免微信账号被误改成 QQ。
+            if (existingAccount && body.loginType === 'manual') {
+                delete payload.platform;
+                delete payload.wxid;
+                if (typeof payload.name === 'string' && !payload.name.trim() && String(existingAccount.name || '').trim()) {
+                    delete payload.name;
+                }
+            }
             let pendingWxSessionId = '';
             let wasRunning = false;
             if (isUpdate && provider.isAccountRunning) {
@@ -138,16 +151,12 @@ function registerAccountRoutes(options: AccountRouteOptions): void {
 
             // 检查是否仅修改了备注信息
             let onlyRemarkChanged = false;
-            if (isUpdate) {
-                const oldAccounts = provider.getAccounts();
-                const oldAccount = oldAccounts.accounts.find((a: DynamicRecord) => a.id === payload.id);
-                if (oldAccount) {
-                    // 检查 payload 中是否只包含 id 和 name 字段
-                    const payloadKeys = Object.keys(payload);
-                    const onlyIdAndName = payloadKeys.length === 2 && payloadKeys.includes('id') && payloadKeys.includes('name');
-                    if (onlyIdAndName) {
-                        onlyRemarkChanged = true;
-                    }
+            if (existingAccount) {
+                // 检查 payload 中是否只包含 id 和 name 字段
+                const payloadKeys = Object.keys(payload);
+                const onlyIdAndName = payloadKeys.length === 2 && payloadKeys.includes('id') && payloadKeys.includes('name');
+                if (onlyIdAndName) {
+                    onlyRemarkChanged = true;
                 }
             }
 
@@ -206,7 +215,7 @@ function registerAccountRoutes(options: AccountRouteOptions): void {
                 : saveAccount();
             if (provider.addAccountLog) {
                 const accountId = isUpdate ? String(payload.id) : String((data.accounts[data.accounts.length - 1] || {}).id || '');
-                const accountName = payload.name || '';
+                const accountName = payload.name || existingAccount?.name || '';
                 provider.addAccountLog(
                     isUpdate ? 'update' : 'add',
                     isUpdate ? `更新账号: ${accountName || accountId}` : `添加账号: ${accountName || accountId}`,
