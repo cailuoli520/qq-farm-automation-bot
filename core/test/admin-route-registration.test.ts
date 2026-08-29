@@ -401,4 +401,28 @@ test('活动路由只保留活动中心操作，不再暴露神秘商人手动�
     assert.equal(routes.some(route => route.includes('mystery-shop')), false);
 });
 
+test('活动路由将连接未就绪错误转换为可读提示', async () => {
+    const { app, handlers } = createAppRecorder();
+    registerActivityRoutes({
+        app,
+        provider: {
+            async getCurrentRainPoetryActivity() {
+                throw Object.assign(new Error('连接尚未就绪: phase=connecting'), { code: 'CONNECTION_NOT_READY' });
+            },
+        },
+        getAccountId,
+        canAccessAccount: accessAllowed,
+    });
+
+    const response = createResponseRecorder();
+    await handlers.get('GET /api/activity-center/rain-poetry')({}, response);
+
+    assert.deepEqual(response.payload, {
+        ok: false,
+        error: '游戏连接尚未就绪，请稍后重试',
+        errorCode: 'CONNECTION_NOT_READY',
+        retryAfterMs: undefined,
+    });
+});
+
 export {};

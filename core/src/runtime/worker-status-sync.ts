@@ -5,7 +5,7 @@ const { getAutomation, getPreferredSeed } = require('../models/store');
 const { getOperationLimits } = require('../services/friend');
 const { getStats } = require('../services/stats');
 const { statusData } = require('../services/status');
-const { getUserState, getWs } = require('../utils/network');
+const { getConnectionState, getUserState } = require('../utils/network');
 
 type DynamicRecord = Record<string, any>;
 
@@ -20,6 +20,7 @@ interface WorkerStatusSynchronizerOptions {
     canSend: () => boolean;
     getAutomationState?: () => unknown;
     getConfigRevision: () => number;
+    getConnectionStateValue?: () => DynamicRecord;
     getLoginReady: () => boolean;
     getPreferredSeedValue?: () => unknown;
     getScheduleTimes: () => WorkerScheduleTimes;
@@ -30,8 +31,8 @@ interface WorkerStatusSynchronizerOptions {
 
 function buildDefaultBaseStatus(loginReady: boolean): { stats: DynamicRecord; levelProgress: unknown } {
     const userState = getUserState();
-    const ws = getWs();
-    const connected = !!(loginReady && ws && ws.readyState === 1);
+    const connectionState = getConnectionState();
+    const connected = !!(loginReady && connectionState?.ready);
     const level = userState.level ?? statusData.level ?? 0;
     const exp = userState.exp ?? statusData.exp ?? 0;
     const levelProgress = level > 0 && exp >= 0 ? getLevelExpProgress(level, exp) : null;
@@ -60,6 +61,7 @@ export function createWorkerStatusSynchronizer(options: WorkerStatusSynchronizer
         canSend,
         getAutomationState = getAutomation,
         getConfigRevision,
+        getConnectionStateValue = getConnectionState,
         getLoginReady,
         getPreferredSeedValue = getPreferredSeed,
         getScheduleTimes,
@@ -75,12 +77,22 @@ export function createWorkerStatusSynchronizer(options: WorkerStatusSynchronizer
 
         const { stats: fullStats, levelProgress } = buildBaseStatus(getLoginReady());
         const scheduleNowMs = now();
+        const connectionState = getConnectionStateValue();
 
         fullStats.nextChecks = buildNextChecks(getScheduleTimes(), scheduleNowMs);
         fullStats.automation = getAutomationState();
         fullStats.preferredSeed = getPreferredSeedValue();
         fullStats.levelProgress = levelProgress;
         fullStats.configRevision = getConfigRevision();
+        fullStats.connection = {
+            ...(fullStats.connection || {}),
+            connected: !!(getLoginReady() && connectionState?.ready),
+            phase: String(connectionState?.phase || 'disconnected'),
+            reason: String(connectionState?.reason || ''),
+            revision: Math.max(0, Number(connectionState?.revision) || 0),
+            reconnectAttempt: Math.max(0, Number(connectionState?.reconnectAttempt) || 0),
+            changedAt: Math.max(0, Number(connectionState?.changedAt) || 0),
+        };
 
         const hash = JSON.stringify(fullStats);
         const sendNowMs = now();

@@ -39,6 +39,7 @@ interface RainPoetryFriendPort {
 interface WorkerRainPoetryRuntimeOptions {
     friend?: Partial<RainPoetryFriendPort>;
     getAutomation: () => DynamicRecord;
+    isConnectionReady?: () => boolean;
     isLifecycleActive: () => boolean;
     log: (tag: string, message: string, meta?: DynamicRecord) => void;
     now?: () => number;
@@ -48,6 +49,8 @@ interface WorkerRainPoetryRuntimeOptions {
 
 export interface WorkerRainPoetryRuntime {
     checkNow: (source?: string) => Promise<RainRunOutcome>;
+    pause: () => void;
+    resume: () => void;
     start: () => void;
     stop: () => void;
 }
@@ -64,6 +67,7 @@ function snapshotFromMutation(result: DynamicRecord): DynamicRecord | null {
 
 export function createWorkerRainPoetryRuntime(options: WorkerRainPoetryRuntimeOptions): WorkerRainPoetryRuntime {
     const { getAutomation, isLifecycleActive, log, scheduler, service } = options;
+    const isConnectionReady = options.isConnectionReady || (() => true);
     const now = options.now || Date.now;
     const friend: RainPoetryFriendPort = {
         getBlacklist: () => getFriendBlacklist(),
@@ -83,6 +87,7 @@ export function createWorkerRainPoetryRuntime(options: WorkerRainPoetryRuntimeOp
         ...options.friend,
     };
     let started = false;
+    let paused = false;
     let unregisterObserver: (() => void) | null = null;
     let pending: Promise<RainRunOutcome> | null = null;
     let lastSnapshot: DynamicRecord | null = null;
@@ -97,7 +102,7 @@ export function createWorkerRainPoetryRuntime(options: WorkerRainPoetryRuntimeOp
 
     function interruptionOutcome(): 'disabled' | 'stopped' | null {
         if (!enabled()) return 'disabled';
-        if (!started || !isLifecycleActive()) return 'stopped';
+        if (!started || paused || !isLifecycleActive() || !isConnectionReady()) return 'stopped';
         return null;
     }
 
@@ -171,11 +176,11 @@ export function createWorkerRainPoetryRuntime(options: WorkerRainPoetryRuntimeOp
     }
 
     async function handleFriendVisit(context: FriendVisitContext): Promise<void> {
-        if (!started || !enabled() || !isLifecycleActive()) return;
-        if (!context.enterReply?.weather_status) return;
+        if (!started || paused || !enabled() || !isLifecycleActive() || !isConnectionReady()) return;
         const gid = String(context.friendGid || '');
         if (!gid) return;
-        const weather = friend.normalizeWeather(context.enterReply.weather_status);
+        const weatherStatus = context.enterReply?.weather_status ?? context.enterReply?.weatherStatus ?? {};
+        const weather = friend.normalizeWeather(weatherStatus);
         const plan = planRainPoetryAutomation(lastSnapshot);
         if (!weather.thunderstorm) {
             recentlyCheckedAt.set(gid, now());
@@ -218,7 +223,7 @@ export function createWorkerRainPoetryRuntime(options: WorkerRainPoetryRuntimeOp
     }
 
     function scheduleBusyRetry(): void {
-        if (!started || !enabled()) return;
+        if (!started || paused || !enabled() || !isConnectionReady()) return;
         scheduler.setTimeoutTask('rain_poetry_busy_retry', BUSY_RETRY_MS, () => checkNow('busy-retry'));
     }
 
@@ -245,7 +250,7 @@ export function createWorkerRainPoetryRuntime(options: WorkerRainPoetryRuntimeOp
             let visited = 0;
             for (const entry of ordered) {
                 if (!planRainPoetryAutomation(lastSnapshot).shouldScanFriends) break;
-                if (!started || !enabled() || !isLifecycleActive()) break;
+                if (!started || paused || !enabled() || !isLifecycleActive() || !isConnectionReady()) break;
                 try {
                     await friend.visit(entry);
                 } catch (error) {
@@ -349,13 +354,31 @@ export function createWorkerRainPoetryRuntime(options: WorkerRainPoetryRuntimeOp
     function start(): void {
         if (started || !enabled() || !isLifecycleActive()) return;
         started = true;
+        paused = false;
         inactiveLogged = false;
+        ensureObserver();
+        scheduler.setIntervalTask('rain_poetry_poll', POLL_INTERVAL_MS, () => checkNow('poll'), { preventOverlap: true });
+    }
+
+    function pause(): void {
+        if (!started || paused) return;
+        paused = true;
+        stopScheduling();
+        unregisterObserver?.();
+        unregisterObserver = null;
+    }
+
+    function resume(): void {
+        if (!started) return start();
+        if (!paused || !enabled() || !isLifecycleActive() || !isConnectionReady()) return;
+        paused = false;
         ensureObserver();
         scheduler.setIntervalTask('rain_poetry_poll', POLL_INTERVAL_MS, () => checkNow('poll'), { preventOverlap: true });
     }
 
     function stop(): void {
         started = false;
+        paused = false;
         stopScheduling();
         unregisterObserver?.();
         unregisterObserver = null;
@@ -364,5 +387,5 @@ export function createWorkerRainPoetryRuntime(options: WorkerRainPoetryRuntimeOp
         recentlyCheckedAt.clear();
     }
 
-    return { checkNow, start, stop };
+    return { checkNow, pause, resume, start, stop };
 }

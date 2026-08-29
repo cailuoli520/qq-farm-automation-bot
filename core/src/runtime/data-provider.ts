@@ -171,7 +171,7 @@ function createDataProvider(options: DataProviderOptions): DataProvider {
         getCurrentQingMeiActivity: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentQingMeiActivity'),
         getCurrentQixiActivity: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentQixiActivity'),
         getCurrentRainPoetryActivity: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'getCurrentRainPoetryActivity'),
-        getRainPoetryWeather: (accountRef, friendGid) => callWorkerApi(resolveAccountRefId(accountRef), 'getRainPoetryWeather', friendGid),
+        getRainPoetryWeather: (accountRef, friendGid, options = {}) => callWorkerApi(resolveAccountRefId(accountRef), 'getRainPoetryWeather', friendGid, options),
         claimBattlePassRewards: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'claimBattlePassRewards'),
         exchangeStarSandGoods: (accountRef, goodsId, count) => callWorkerApi(resolveAccountRefId(accountRef), 'exchangeStarSandGoods', goodsId, count),
         lightConstellation: (accountRef) => callWorkerApi(resolveAccountRefId(accountRef), 'lightConstellation'),

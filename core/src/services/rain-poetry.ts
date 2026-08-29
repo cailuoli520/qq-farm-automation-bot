@@ -7,6 +7,8 @@ import { types } from '../utils/proto';
 import { bytesToText, int64Number, int64String, itemDto } from './activity-dto';
 import { getActivityWindows } from './activity-windows';
 import { withFriendVisit } from './friend-visit';
+import { getCachedFriendWeather, recordFriendWeatherVisit } from './friend-weather-cache';
+import { waitForFriendTaskLease } from './friend-task-coordinator';
 import { asRecord, recordArray } from './service-boundaries';
 
 const { enterFriendFarm, leaveFriendFarm } = require('./friend-visit');
@@ -14,6 +16,7 @@ const { getBag, getBagItems, useItem } = require('./warehouse');
 
 type DynamicRecord = Record<string, any>;
 type TimeoutOrOptions = number | { timeoutMs?: number };
+export type RainWeatherQueryOptions = { cacheOnly?: boolean; forceRefresh?: boolean };
 
 const GROUP_ID = '2026070300';
 const EXCHANGE_ACTIVITY_ID = '2026070301';
@@ -46,16 +49,18 @@ const RAIN_ACTIVITY_IDS = new Set([GROUP_ID, EXCHANGE_ACTIVITY_ID, '2026070302',
 
 class RainPoetryBusinessError extends Error {
     code: string;
+    retryAfterMs?: number;
 
-    constructor(code: string, message: string) {
+    constructor(code: string, message: string, retryAfterMs?: number) {
         super(message);
         this.name = 'RainPoetryBusinessError';
         this.code = code;
+        this.retryAfterMs = retryAfterMs;
     }
 }
 
-function businessError(code: string, message: string): RainPoetryBusinessError {
-    return new RainPoetryBusinessError(code, message);
+function businessError(code: string, message: string, retryAfterMs?: number): RainPoetryBusinessError {
+    return new RainPoetryBusinessError(code, message, retryAfterMs);
 }
 
 function positiveInt64(value: unknown, code: string, fieldName: string): string {
@@ -289,6 +294,19 @@ async function withFriendFarm<T>(
     return withFriendVisit({ source: 'manual', friendGid, enter, leave }, ({ enterReply }) => operation(enterReply));
 }
 
+async function withCoordinatedFriendFarm<T>(
+    friendGid: string,
+    operation: (enterReply: DynamicRecord) => Promise<T>,
+): Promise<T> {
+    const lease = await waitForFriendTaskLease('manual-rain');
+    if (!lease) throw businessError('FRIEND_TASK_BUSY', '好友巡查正在运行，请稍后再检查天气', 5000);
+    try {
+        return await withFriendFarm(friendGid, operation);
+    } finally {
+        lease.release();
+    }
+}
+
 function ensureRainCollectionResult(reply: unknown): { received: DynamicRecord; consumed: DynamicRecord } {
     const result = asRecord(asRecord(reply).weather_collection_result);
     const received = rainItem(result.received_item);
@@ -305,20 +323,53 @@ function requireUnlockableResearchNode(activity: DynamicRecord, nodeId: string):
     return node;
 }
 
-async function getRainPoetryWeather(friendGidInput: unknown = ''): Promise<DynamicRecord> {
-    await requireActivity();
+function weatherResultFromVisit(friendGid: string, enterReply: DynamicRecord, cached: boolean, inspectedAt: number): DynamicRecord {
+    const basic = asRecord(enterReply.basic);
+    const actualGid = int64String(basic.gid);
+    if (actualGid !== '0' && actualGid !== friendGid) throw businessError('RAIN_FRIEND_MISMATCH', '进入的好友农场与所选 GID 不一致');
+    const observation = recordFriendWeatherVisit({
+        source: 'manual',
+        friendGid,
+        friendName: String(basic.remark || basic.name || `GID:${friendGid}`),
+        enterReply,
+    }, inspectedAt);
+    return {
+        host: observation?.host || { gid: friendGid, name: String(basic.remark || basic.name || `GID:${friendGid}`), avatarUrl: String(basic.avatar_url || ''), isSelf: false },
+        weather: { ...normalizeWeather(enterReply.weather_status), known: true },
+        pet: observation?.pet || null,
+        cached,
+        inspectedAt,
+    };
+}
+
+function weatherResultFromCache(friendGid: string): DynamicRecord | null {
+    const cached = getCachedFriendWeather(friendGid);
+    if (!cached) return null;
+    return {
+        host: cached.host,
+        weather: { ...normalizeWeather(cached.weatherStatus), known: true },
+        pet: cached.pet,
+        cached: true,
+        inspectedAt: cached.inspectedAt,
+    };
+}
+
+async function getRainPoetryWeather(friendGidInput: unknown = '', optionsInput: RainWeatherQueryOptions = {}): Promise<DynamicRecord | null> {
     const raw = String(friendGidInput ?? '').trim();
-    if (!raw) return { host: { gid: '', name: '我的农场', isSelf: true }, weather: normalizeWeather(await queryWeather()) };
+    if (!raw) {
+        await requireActivity();
+        return { host: { gid: '', name: '我的农场', isSelf: true }, weather: { ...normalizeWeather(await queryWeather()), known: true }, cached: false, inspectedAt: Date.now(), pet: null };
+    }
     const friendGid = positiveInt64(raw, 'INVALID_RAIN_FRIEND_GID', 'friendGid');
-    return withFriendFarm(friendGid, async (enterReply) => {
-        const basic = asRecord(enterReply.basic);
-        const actualGid = int64String(basic.gid);
-        if (actualGid !== '0' && actualGid !== friendGid) throw businessError('RAIN_FRIEND_MISMATCH', '进入的好友农场与所选 GID 不一致');
-        return {
-            host: { gid: friendGid, name: String(basic.remark || basic.name || `GID:${friendGid}`), avatarUrl: String(basic.avatar_url || ''), isSelf: false },
-            weather: normalizeWeather(enterReply.weather_status),
-        };
-    });
+    const options = asRecord(optionsInput);
+    if (options.forceRefresh !== true) {
+        const cached = weatherResultFromCache(friendGid);
+        if (cached || options.cacheOnly === true) return cached;
+    }
+    await requireActivity();
+    return withCoordinatedFriendFarm(friendGid, async enterReply => (
+        weatherResultFromVisit(friendGid, enterReply, false, Date.now())
+    ));
 }
 
 async function exchangeRainBottle(goodsIdInput: unknown = '200', countInput: unknown = 1): Promise<DynamicRecord> {
@@ -344,7 +395,10 @@ async function collectRainWeather(friendGidInput: unknown): Promise<DynamicRecor
     const friendGid = positiveInt64(friendGidInput, 'INVALID_RAIN_FRIEND_GID', 'friendGid');
     const activity = await requireActivity();
     if (!activity.actions.collect.enabled) throw businessError('RAIN_COLLECT_UNAVAILABLE', '背包中没有可用的天气采集瓶');
-    return withFriendFarm(friendGid, enterReply => collectRainWeatherFromVisit(friendGid, enterReply, activity));
+    return withCoordinatedFriendFarm(friendGid, async (enterReply) => {
+        weatherResultFromVisit(friendGid, enterReply, false, Date.now());
+        return collectRainWeatherFromVisit(friendGid, enterReply, activity);
+    });
 }
 
 async function collectRainWeatherFromVisit(
@@ -418,5 +472,6 @@ export {
     requireUnlockableResearchNode,
     unlockRainResearch,
     useRainThunderstorm,
+    weatherResultFromCache,
     withFriendFarm,
 };

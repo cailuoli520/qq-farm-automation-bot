@@ -22,18 +22,24 @@ const {
 const {
     ALL_FERTILIZER_LAND_TYPES,
     analyzeLands,
+    buildFarmSocialEventDetails,
     buildLandMap,
     buildSlaveToMasterMap,
     classifyHarvestedLandsByMap,
     filterLandIdsByTypes,
     formatFertilizerLandTypes,
     getCurrentPhase,
+    getCleanableFarmSocialEventItemIds,
+    getConfirmedFarmSocialEventItemIds,
     getDisplayLandContext,
     getFastMatureLands,
     getPlantInteractionEffects,
+    getPlantMutantConfigIds,
+    getPurpleCrystalResonanceExpBonus,
     getLandTypeByLevel,
     getOrganicFertilizerTargetsFromLands,
     isOccupiedSlaveLand,
+    normalizeLandBuff,
     normalizeFertilizerLandTypes,
     summarizeLandDetails,
 } = require('./farm-land-domain');
@@ -124,18 +130,26 @@ async function insecticide(landIds: unknown[]): Promise<DynamicRecord> {
 }
 
 /** 自家一键务农。官方请求会显式编码两个值为 0 的场景字段。 */
-function encodeOwnFarmingRequest(landIds: unknown[], hostGid: unknown): Uint8Array {
+function encodeOwnFarmingRequest(
+    landIds: unknown[],
+    hostGid: unknown,
+    socialEventItemIds: unknown[] = [],
+): Uint8Array {
+    const normalizedSocialEventItemIds = [...new Set((Array.isArray(socialEventItemIds) ? socialEventItemIds : [])
+        .map(itemId => toNum(itemId))
+        .filter(itemId => itemId > 0))];
     return types.FarmingRequest.encode(types.FarmingRequest.create({
         land_ids: landIds,
         host_gid: toLong(hostGid),
         field_3: 0,
         field_4: 0,
+        social_event_item_ids: normalizedSocialEventItemIds.map(itemId => toLong(itemId)),
     })).finish();
 }
 
-async function farmingOwn(landIds: unknown[]): Promise<DynamicRecord> {
+async function farmingOwn(landIds: unknown[], socialEventItemIds: unknown[] = []): Promise<DynamicRecord> {
     const state = getUserState();
-    const body = encodeOwnFarmingRequest(landIds, state.gid);
+    const body = encodeOwnFarmingRequest(landIds, state.gid, socialEventItemIds);
     const { body: replyBody } = await sendMsgAsync('gamepb.plantpb.PlantService', 'Farming', body);
     return types.FarmingReply.decode(replyBody);
 }
@@ -413,6 +427,7 @@ async function getLandsDetail() {
             const landSize = toNum(land.land_size);
             const couldUnlock = !!land.could_unlock;
             const couldUpgrade = !!land.could_upgrade;
+            const landBuff = normalizeLandBuff(land);
             const {
                 sourceLand,
                 occupiedByMaster,
@@ -438,6 +453,9 @@ async function getLandsDetail() {
                     masterLandId: 0,
                     occupiedLandIds: [],
                     plantSize: 1,
+                    landBuff,
+                    mutantConfigIds: [],
+                    purpleCrystalResonanceExpBonus: 0,
                 });
                 continue;
             }
@@ -462,6 +480,9 @@ async function getLandsDetail() {
                     masterLandId,
                     occupiedLandIds,
                     plantSize: 1,
+                    landBuff,
+                    mutantConfigIds: [],
+                    purpleCrystalResonanceExpBonus: 0,
                 });
                 continue;
             }
@@ -485,6 +506,9 @@ async function getLandsDetail() {
                     masterLandId,
                     occupiedLandIds,
                     plantSize: 1,
+                    landBuff,
+                    mutantConfigIds: [],
+                    purpleCrystalResonanceExpBonus: 0,
                 });
                 continue;
             }
@@ -519,6 +543,8 @@ async function getLandsDetail() {
             const needWeed = (plant.weed_owners && plant.weed_owners.length > 0) || (toTimeSec(currentPhase.weeds_time) > 0 && toTimeSec(currentPhase.weeds_time) <= nowSec);
             const needBug = (plant.insect_owners && plant.insect_owners.length > 0) || (toTimeSec(currentPhase.insect_time) > 0 && toTimeSec(currentPhase.insect_time) <= nowSec);
             const interactionEffects = getPlantInteractionEffects(plant);
+            const mutantConfigIds = getPlantMutantConfigIds(plant, currentPhase);
+            const purpleCrystalResonanceExpBonus = getPurpleCrystalResonanceExpBonus(land, mutantConfigIds);
 
             lands.push({
                 id,
@@ -536,6 +562,9 @@ async function getLandsDetail() {
                 needWeed,
                 needBug,
                 interactionEffects,
+                landBuff,
+                mutantConfigIds,
+                purpleCrystalResonanceExpBonus,
                 leftInorcFertTimes: Object.hasOwn(plant, 'left_inorc_fert_times')
                     ? toNum(plant.left_inorc_fert_times)
                     : null,
@@ -557,6 +586,7 @@ async function getLandsDetail() {
             lands,
             summary: summarizeLandDetails(lands),
             career: await getCareerInfoOrNull(getUserState().gid),
+            socialEvents: buildFarmSocialEventDetails(landsReply),
         };
     } catch {
         return { lands: [], summary: {} };
@@ -762,6 +792,7 @@ async function runFarmOperation(opType: string) {
     const lands = landsReply.lands;
 
     const status = analyzeLands(lands, isFirstFarmCheck);
+    const socialEventItemIds: number[] = getCleanableFarmSocialEventItemIds(landsReply);
 
     // 摘要
     const statusParts: string[] = [];
@@ -770,6 +801,7 @@ async function runFarmOperation(opType: string) {
     if (status.needBug.length) statusParts.push(`虫:${status.needBug.length}`);
     if (status.needWater.length) statusParts.push(`水:${status.needWater.length}`);
     if (status.needInteractionCleanup.length) statusParts.push(`道具:${status.needInteractionCleanup.length}`);
+    if (socialEventItemIds.length) statusParts.push(`事件:${socialEventItemIds.length}`);
     if (status.dead.length) statusParts.push(`枯:${status.dead.length}`);
     if (status.empty.length) statusParts.push(`空:${status.empty.length}`);
     if (status.unlockable.length) statusParts.push(`解:${status.unlockable.length}`);
@@ -782,13 +814,34 @@ async function runFarmOperation(opType: string) {
     if (opType === 'all' || opType === 'clear') {
         // 检查是否跳过自己农场的草虫（仅自动模式生效，手动clear不受影响）
         const skipOwnWeedBug = opType === 'all' && isAutomationOn('skip_own_weed_bug');
-        if (status.needInteractionCleanup.length > 0 && !skipOwnWeedBug) {
+        const farmingLandIds = [...new Set<number>(status.needInteractionCleanup as number[])];
+        if (socialEventItemIds.length > 0 && farmingLandIds.length === 0) {
+            // 农场级事件仍要求 Farming 携带一块有效作物地，官方单点请求也是该结构。
+            const fallbackLandId = status.growing[0] || status.harvestable[0] || status.dead[0] || 0;
+            if (fallbackLandId > 0) farmingLandIds.push(fallbackLandId);
+        }
+        if (farmingLandIds.length > 0 && (status.needInteractionCleanup.length > 0 || socialEventItemIds.length > 0)) {
             try {
-                await farmingOwn(status.needInteractionCleanup);
-                actions.push(`清理道具${status.needInteractionCleanup.length}`);
+                const farmingReply = await farmingOwn(farmingLandIds, socialEventItemIds);
+                if (status.needInteractionCleanup.length > 0) {
+                    actions.push(`清理道具${status.needInteractionCleanup.length}`);
+                }
+                if (socialEventItemIds.length > 0) {
+                    const confirmedItemIds = new Set(getConfirmedFarmSocialEventItemIds(farmingReply));
+                    const cleanedItemIds = socialEventItemIds.filter(itemId => confirmedItemIds.has(itemId));
+                    if (cleanedItemIds.length > 0) {
+                        actions.push(`清理农场事件${cleanedItemIds.length}`);
+                    }
+                    if (cleanedItemIds.length !== socialEventItemIds.length) {
+                        const missingItemIds = socialEventItemIds.filter(itemId => !confirmedItemIds.has(itemId));
+                        logWarn('务农', `农场事件清理回包未确认道具: ${missingItemIds.join(',')}`);
+                    }
+                }
             } catch (e) {
-                logWarn('务农', `清理土地互动道具失败: ${errorMessage(e)}`);
+                logWarn('务农', `清理异常状态失败: ${errorMessage(e)}`);
             }
+        } else if (socialEventItemIds.length > 0) {
+            logWarn('务农', '检测到农场级异常状态，但当前没有可用于清理的作物地');
         }
         if (status.needWeed.length > 0 && !skipOwnWeedBug) {
             try {
@@ -984,6 +1037,7 @@ function startFarmCheckLoop(options: { externalScheduler?: boolean } = {}): void
     externalSchedulerMode = !!options.externalScheduler;
     farmLoopRunning = true;
     networkEvents.on('landsChanged', onLandsChangedPush);
+    networkEvents.on('farmSocialEventsChanged', onFarmSocialEventsChangedPush);
     if (!externalSchedulerMode) {
         scheduleNextFarmCheck(2000);
     }
@@ -1008,11 +1062,27 @@ function onLandsChangedPush(lands: DynamicRecord[]): void {
     });
 }
 
+function onFarmSocialEventsChangedPush(events: DynamicRecord[]): void {
+    if (!isAutomationOn('farm_push')) return;
+    if (isCheckingFarm) return;
+    const now = Date.now();
+    if (now - lastPushTime < 500) return;
+    lastPushTime = now;
+    const count = Array.isArray(events) ? events.length : 0;
+    log('农场', `收到农场社交事件推送: ${count}个，检查中...`, {
+        module: 'farm', event: '农场社交事件通知', result: 'trigger_check', count,
+    });
+    farmScheduler.setTimeoutTask('farm_push_check', 100, async () => {
+        if (!isCheckingFarm) await checkFarm();
+    });
+}
+
 function stopFarmCheckLoop(): void {
     farmLoopRunning = false;
     externalSchedulerMode = false;
     farmScheduler.clearAll();
     networkEvents.removeListener('landsChanged', onLandsChangedPush);
+    networkEvents.removeListener('farmSocialEventsChanged', onFarmSocialEventsChangedPush);
     // 停止化肥自动购买检测定时器
     stopFertilizerBuyCheckTimer();
 }

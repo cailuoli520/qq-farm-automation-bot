@@ -126,7 +126,7 @@ function giftQixiSachet(friendGid: string) { activityStore.giftQixiSachet(accoun
 function loadQixiDewTargets(hostGid: string) { activityStore.fetchQixiDewTargets(accountId(), hostGid) }
 function useQixiDew(hostGid: string, landId: string) { activityStore.useQixiDew(accountId(), hostGid, landId) }
 function refreshQixiFriends() { friendStore.fetchFriends(accountId(), true) }
-function checkRainWeather(friendGid: string) { activityStore.checkRainWeather(accountId(), friendGid) }
+function checkRainWeather(friendGid: string, options: { cacheOnly?: boolean, forceRefresh?: boolean } = {}) { activityStore.checkRainWeather(accountId(), friendGid, options) }
 function exchangeRainBottle(goodsId: string) { activityStore.exchangeRainBottle(accountId(), goodsId) }
 function collectRainWeather(friendGid: string) { activityStore.collectRainWeather(accountId(), friendGid) }
 function useRainThunderstorm() { activityStore.useRainThunderstorm(accountId()) }

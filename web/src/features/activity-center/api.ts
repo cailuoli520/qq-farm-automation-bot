@@ -49,10 +49,18 @@ export async function fetchQixiDewTargetsRequest(accountId: string, hostGid = ''
   return responsePayload(response.data)
 }
 
-export async function fetchRainWeatherRequest(accountId: string, friendGid: string): Promise<unknown> {
+export async function fetchRainWeatherRequest(
+  accountId: string,
+  friendGid: string,
+  options: { cacheOnly?: boolean, forceRefresh?: boolean } = {},
+): Promise<unknown> {
   const response = await api.get('/api/activity-center/rain-poetry/weather', {
     ...requestOptions(accountId),
-    params: { friendGid },
+    params: {
+      friendGid,
+      ...(options.cacheOnly ? { cacheOnly: 'true' } : {}),
+      ...(options.forceRefresh ? { forceRefresh: 'true' } : {}),
+    },
   })
   return responsePayload(response.data)
 }

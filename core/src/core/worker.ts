@@ -11,6 +11,8 @@ import { createWorkerDailyRoutineScheduler } from '../runtime/worker-daily-routi
 import { getDailyGiftOverview } from '../runtime/worker-daily-gifts';
 import { createWorkerStatusSynchronizer } from '../runtime/worker-status-sync';
 import { createWorkerRainPoetryRuntime } from '../runtime/worker-rain-poetry';
+import { clearFriendWeatherCache, recordFriendWeatherVisit } from '../services/friend-weather-cache';
+import { registerFriendVisitObserver } from '../services/friend-visit';
 /**
  * 子进程 Worker - 负责运行单个账号的挂机逻辑
  */
@@ -34,7 +36,7 @@ const { initStatusBar, setStatusPlatform } = require('../services/status');
 const { setRecordGoldExpHook } = require('../services/status');
 const { cleanupTaskSystem, checkAndClaimTasks, initTaskSystem } = require('../services/task');
 const { sellAllFruits, getBag, getBagItems, openFertilizerGiftPacksSilently } = require('../services/warehouse');
-const { connect, reconnect, cleanup, getWs, getUserState, networkEvents } = require('../utils/network');
+const { connect, reconnect, cleanup, getConnectionState, getUserState, getWs, networkEvents } = require('../utils/network');
 const { setClientVersionPrefix } = require('../config/config');
 const { createWorkerBattlePassPushRuntime } = require('../runtime/worker-battle-pass');
 const { createWorkerMysteryShopRuntime } = require('../runtime/worker-mystery-shop');
@@ -98,12 +100,20 @@ let battlePassPushRuntime: WorkerBattlePassPushRuntime | null = null;
 let mysteryShopRuntime: WorkerMysteryShopRuntime | null = null;
 let petGiftRuntime: WorkerPetGiftRuntime | null = null;
 let rainPoetryRuntime: WorkerRainPoetryRuntime | null = null;
+let unregisterFriendWeatherObserver: (() => void) | null = null;
 let harvestSellRunning = false;
 let onWsError: ((payload: DynamicRecord) => void) | null = null;
+let onConnectionStateChanged: ((payload: DynamicRecord) => void) | null = null;
 let wsErrorHandledAt = 0;
 let reauthRequiredNotified = false;
 let workerStartupPromise: Promise<void> | null = null;
+let initialLoginInitialized = false;
 const workerScheduler = createScheduler('worker');
+
+function isGatewayReady(): boolean {
+    return loginReady && getConnectionState().ready === true;
+}
+
 const automationScheduler = createWorkerAutomationScheduler({
     checkAndClaimEmails,
     checkAndClaimTasks,
@@ -112,14 +122,14 @@ const automationScheduler = createWorkerAutomationScheduler({
     config: CONFIG,
     getAutomation,
     isHelpExpLimitReached,
-    isLoginReady: () => loginReady,
+    isLoginReady: isGatewayReady,
     log,
     openFertilizerGiftPacksSilently,
     scheduler: workerScheduler,
 });
 const dailyRoutineScheduler = createWorkerDailyRoutineScheduler({
     getDateKey: getBeijingDateKey,
-    isLoginReady: () => loginReady,
+    isLoginReady: isGatewayReady,
     runStartupRoutines: () => runDailyRoutines(true),
     runCrossDayRoutines: async () => {
         await runDailyRoutines(true);
@@ -173,6 +183,7 @@ function cleanupWorkerResources(): void {
     workerLifecycleRevision += 1;
     isRunning = false;
     loginReady = false;
+    initialLoginInitialized = false;
     try { saveStats(); } catch {}
     try { automationScheduler.stop(); } catch {}
     try { dailyRoutineScheduler.stop(); } catch {}
@@ -187,6 +198,13 @@ function cleanupWorkerResources(): void {
     petGiftRuntime = null;
     try { rainPoetryRuntime?.stop(); } catch {}
     rainPoetryRuntime = null;
+    try { unregisterFriendWeatherObserver?.(); } catch {}
+    unregisterFriendWeatherObserver = null;
+    clearFriendWeatherCache();
+    if (onConnectionStateChanged) {
+        networkEvents.off('connectionStateChanged', onConnectionStateChanged);
+        onConnectionStateChanged = null;
+    }
     try { stopAceRuntime(true); } catch {}
     try { cleanup('worker exit'); } catch {}
     try { workerScheduler.clearAll(); } catch {}
@@ -272,7 +290,7 @@ function isDailyRoutineEnabled(_auto: unknown): boolean {
 }
 
 async function runDailyRoutines(force = false): Promise<void> {
-    if (!loginReady) return;
+    if (!isGatewayReady()) return;
     try {
         // 以下功能默认启用，不再检查开关
         await checkAndClaimEmails(force);
@@ -327,7 +345,7 @@ function applyRuntimeConfig(snapshot: DynamicRecord, syncNow = false): void {
         applyIntervalsToRuntime(incomingIntervals);
     }
 
-    if (loginReady) {
+    if (isGatewayReady()) {
         refreshFarmCheckLoop(200);
         refreshFriendCheckLoop(200);
         automationScheduler.reset();
@@ -353,7 +371,7 @@ function applyRuntimeConfig(snapshot: DynamicRecord, syncNow = false): void {
             if (fertilizerChanged && (nextFertilizerMode === 'both' || nextFertilizerMode === 'organic' || nextFertilizerMode === 'smart')) {
                 // 保存设置时 /api/automation 可能连续触发多次 config_sync，这里做防抖为一次立即施肥
                 workerScheduler.setTimeoutTask('fertilizer_immediate_after_save', 600, async () => {
-                    if (!loginReady) return;
+                    if (!isGatewayReady()) return;
                     try {
                         // await runFertilizerByConfig([]);
                         await runFertilizerByConfig([], { skipNormal: true });
@@ -369,7 +387,7 @@ function applyRuntimeConfig(snapshot: DynamicRecord, syncNow = false): void {
 
             if (!prevAuto?.mystery_shop_buy && nextAuto?.mystery_shop_buy) {
                 workerScheduler.setTimeoutTask('mystery_shop_immediate_after_save', 400, () => {
-                    if (!loginReady) return;
+                    if (!isGatewayReady()) return;
                     mysteryShopRuntime?.checkNow().catch(() => null);
                 });
             }
@@ -379,7 +397,7 @@ function applyRuntimeConfig(snapshot: DynamicRecord, syncNow = false): void {
             } else if (!prevAuto?.rain_poetry_auto && nextAuto?.rain_poetry_auto) {
                 rainPoetryRuntime?.start();
                 workerScheduler.setTimeoutTask('rain_poetry_immediate_after_save', 400, () => {
-                    if (!loginReady) return;
+                    if (!isGatewayReady()) return;
                     rainPoetryRuntime?.checkNow('config-enabled').catch(() => null);
                 });
             }
@@ -443,6 +461,11 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
     const lifecycleRevision = ++workerLifecycleRevision;
     const isLifecycleActive = () => isRunning && lifecycleRevision === workerLifecycleRevision;
     isRunning = true;
+    clearFriendWeatherCache();
+    unregisterFriendWeatherObserver?.();
+    unregisterFriendWeatherObserver = registerFriendVisitObserver(context => {
+        recordFriendWeatherVisit(context);
+    });
 
     const { code, platform } = config;
 
@@ -475,11 +498,6 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
             code: 400,
             message: payload?.message || '',
         });
-        if (isRunning) {
-            workerScheduler.setTimeoutTask('ws_error_cleanup', 1000, () => {
-                if (isRunning) cleanup();
-            });
-        }
     };
     networkEvents.on('ws_error', onWsError);
     networkEvents.on('mallNeedNotify', () => {
@@ -537,6 +555,7 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
         || createWorkerMysteryShopRuntime({
             events: networkEvents,
             getAutomation,
+            isConnectionReady: isGatewayReady,
             isLifecycleActive,
             log,
             getCurrencyBalance: (currencyId: string) => {
@@ -553,11 +572,11 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
             service: require('../services/mystery-shop'),
         });
     mysteryShopRuntime = mysteryRuntime;
-    mysteryRuntime.start();
 
     const rainRuntime: WorkerRainPoetryRuntime = rainPoetryRuntime
         || createWorkerRainPoetryRuntime({
             getAutomation,
+            isConnectionReady: isGatewayReady,
             isLifecycleActive,
             log,
             scheduler: workerScheduler,
@@ -565,15 +584,49 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
         });
     rainPoetryRuntime = rainRuntime;
 
+    if (onConnectionStateChanged) {
+        networkEvents.off('connectionStateChanged', onConnectionStateChanged);
+    }
+    onConnectionStateChanged = (state) => {
+        if (state?.ready === true) {
+            syncStatus();
+            return;
+        }
+
+        const wasReady = loginReady;
+        loginReady = false;
+        if (!wasReady) {
+            syncStatus();
+            return;
+        }
+
+        automationScheduler.pause();
+        rainPoetryRuntime?.pause();
+        mysteryShopRuntime?.pause();
+        cleanupTaskSystem();
+        stopFarmCheckLoop();
+        stopFriendCheckLoop();
+        workerScheduler.clear('rain_poetry_login');
+        workerScheduler.clear('bad_daily_once');
+        syncStatus();
+    };
+    networkEvents.on('connectionStateChanged', onConnectionStateChanged);
+
     // 服务端版本前缀校准结果上报主进程（用于持久化，跨重启生效）
     networkEvents.on('versionPrefixChanged', (prefix: unknown) => {
         sendToMaster({ type: 'version_prefix_update', prefix: String(prefix || '') });
     });
 
     const onLoginSuccess = async () => {
-        if (!isLifecycleActive()) return;
+        const loginRevision = getConnectionState().revision;
+        const isCurrentLoginReady = () => isLifecycleActive()
+            && getConnectionState().ready === true
+            && getConnectionState().revision === loginRevision;
+        if (!isCurrentLoginReady()) return;
+        const firstLogin = !initialLoginInitialized;
         loginReady = true;
         reauthRequiredNotified = false;
+        mysteryShopRuntime?.resume();
         mysteryShopRuntime?.checkNow().catch(() => null);
         if (onSellGain) {
             networkEvents.off('sell', onSellGain);
@@ -655,28 +708,42 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
         state.diamond = diamondBalanceResult.status === 'fulfilled'
             ? Math.max(0, Number(diamondBalanceResult.value) || 0)
             : null;
-        if (!isLifecycleActive()) return;
-        // 登录成功后，以当前金币/经验/点券作为统计基线，并清空会话增量
-        const latest = getUserState();
-        const accountId = process.env.FARM_ACCOUNT_ID || '';
-        initStatsWithPersistence(accountId, Number(latest.gold || 0), Number(latest.exp || 0), Number(latest.coupon || 0));
-        resetSessionGains();
+        if (!isCurrentLoginReady()) return;
+        if (firstLogin) {
+            // 只在 Worker 首次认证成功时建立统计基线，重连不能清空本次会话增量。
+            const latest = getUserState();
+            const accountId = process.env.FARM_ACCOUNT_ID || '';
+            try {
+                initStatsWithPersistence(accountId, Number(latest.gold || 0), Number(latest.exp || 0), Number(latest.coupon || 0));
+                resetSessionGains();
+            } catch (e) {
+                log('系统', `会话统计初始化失败: ${errorMessage(e)}`, {
+                    module: 'system', event: 'stats_init', result: 'error',
+                });
+            }
 
-        // 登录成功后启动各模块
-        await processInviteCodes();
-        if (!isLifecycleActive()) return;
-        if (getAutomation().fertilizer_gift) {
-            await openFertilizerGiftPacksSilently().catch(() => 0);
+            await processInviteCodes().catch((e: unknown) => {
+                log('系统', `邀请码处理失败: ${errorMessage(e)}`, {
+                    module: 'system', event: 'invite_init', result: 'error',
+                });
+            });
+            if (!isCurrentLoginReady()) return;
+            if (getAutomation().fertilizer_gift) {
+                await openFertilizerGiftPacksSilently().catch(() => 0);
+            }
+            if (!isCurrentLoginReady()) return;
         }
-        if (!isLifecycleActive()) return;
 
-        rainRuntime.start();
+        rainRuntime.resume();
         workerScheduler.setTimeoutTask('rain_poetry_login', 1000, () => {
-            rainRuntime.checkNow('login').catch(() => null);
+            if (!isGatewayReady()) return;
+            rainRuntime.checkNow(firstLogin ? 'login' : 'reconnect').catch(() => null);
         });
-        
-        // 启动时执行当天的放虫放草；跨日后由每日调度再次触发。
+
+        // 每次认证恢复都重新安排当天任务；任务内部按北京时间做幂等去重。
+        // 这样首次启动后 20 秒内掉线也不会永久丢失当天的放虫放草。
         workerScheduler.setTimeoutTask('bad_daily_once', 20000, async () => {
+            if (!isGatewayReady()) return;
             try {
                 await runBadOncePerDay();
             } catch (e) {
@@ -684,56 +751,52 @@ async function startBot(config: Extract<MasterToWorkerMessage, { type: 'start' }
                 log('好友', `每日放虫放草执行失败: ${reason}`, { module: 'friend', event: '每日放虫放草失败', error: reason });
             }
         });
-        
-        // 微信凭证定时保活：每 30 分钟主动刷新 loginBuffer + refreshtoken（滚动续期）+ code。
-        // refreshtoken 约 2h 过期、loginBuffer 有效期 >2h——只换 code 不刷凭证会导致
-        // loginBuffer 失效时 refreshtoken 已过期（code=-109）只能重扫；主动刷新则凭证永不失效
-        workerScheduler.setIntervalTask('wx_login_keepalive', 30 * 60 * 1000, async () => {
-            if (!isRunning) return;
-            try {
-                const accountId = String(process.env.FARM_ACCOUNT_ID || '');
-                const { getAccounts } = require('../models/store');
-                const accounts = typeof getAccounts === 'function' ? getAccounts() : { accounts: [] };
-                const acc = (accounts.accounts || []).find((account: DynamicRecord) => String(account.id) === accountId);
-                if (!acc || !acc.wxid) return;
-                const alive = await requestMasterCredential('keepalive');
-                if (!isRunning) return;
-                if (alive.Success) {
-                    log('系统', '微信凭证保活成功（loginBuffer/refreshtoken/code 已续期）', { accountId });
-                }
-                // 失败静默：下轮再试；真实掉线时 ws_code_rejected 链路兜底刷新
-            } catch (e) {
-                log('系统', `微信凭证保活刷新失败: ${errorMessage(e)}`, { accountId: String(process.env.FARM_ACCOUNT_ID || '') });
-            }
-        }, { preventOverlap: true });
 
-        // 观星自动点亮：每日星宿奖励含星语铃花种子（29003 等返场作物），点亮当日星宿奖励即自动入包。
-        // 每 6 小时尝试一次（当日已领则幂等跳过 nothingToClaim，次日自动点亮下一宿）
-        workerScheduler.setIntervalTask('constellation_auto_light', 6 * 60 * 60 * 1000, async () => {
-            if (!isRunning) return;
-            try {
-                const { lightConstellation } = require('../services/activity');
-                const result = await lightConstellation();
-                if (result && result.outcome === 'lighted') {
-                    log('活动', '观星自动点亮成功，当日星宿奖励已入包', { accountId: String(process.env.FARM_ACCOUNT_ID || '') });
-                } else if (result && result.outcome === 'nothingToClaim') {
-                    // 今日已领，幂等跳过
-                } else if (result && result.error) {
-                    log('活动', `观星自动点亮跳过: ${result.error}`, { accountId: String(process.env.FARM_ACCOUNT_ID || '') });
+        if (firstLogin) {
+            // 微信凭证定时保活：每 30 分钟主动刷新 loginBuffer + refreshtoken（滚动续期）+ code。
+            workerScheduler.setIntervalTask('wx_login_keepalive', 30 * 60 * 1000, async () => {
+                if (!isRunning) return;
+                try {
+                    const accountId = String(process.env.FARM_ACCOUNT_ID || '');
+                    const { getAccounts } = require('../models/store');
+                    const accounts = typeof getAccounts === 'function' ? getAccounts() : { accounts: [] };
+                    const acc = (accounts.accounts || []).find((account: DynamicRecord) => String(account.id) === accountId);
+                    if (!acc || !acc.wxid) return;
+                    const alive = await requestMasterCredential('keepalive');
+                    if (!isRunning) return;
+                    if (alive.Success) {
+                        log('系统', '微信凭证保活成功（loginBuffer/refreshtoken/code 已续期）', { accountId });
+                    }
+                } catch (e) {
+                    log('系统', `微信凭证保活刷新失败: ${errorMessage(e)}`, { accountId: String(process.env.FARM_ACCOUNT_ID || '') });
                 }
-            } catch (e) {
-                const msg = errorMessage(e);
-                // 星座活动不存在/未开放：静默（下轮再试），避免每 6 小时刷错误日志
-                if (msg.includes('未发现星座活动') || msg.includes('1034038')) return;
-                log('活动', `观星自动点亮失败: ${msg}`, { accountId: String(process.env.FARM_ACCOUNT_ID || '') });
-            }
-        }, { preventOverlap: true });
+            }, { preventOverlap: true });
+
+            // 观星自动点亮：每日星宿奖励含返场作物种子。断线期间只保留计时，不发送业务请求。
+            workerScheduler.setIntervalTask('constellation_auto_light', 6 * 60 * 60 * 1000, async () => {
+                if (!isGatewayReady()) return;
+                try {
+                    const { lightConstellation } = require('../services/activity');
+                    const result = await lightConstellation();
+                    if (result && result.outcome === 'lighted') {
+                        log('活动', '观星自动点亮成功，当日星宿奖励已入包', { accountId: String(process.env.FARM_ACCOUNT_ID || '') });
+                    } else if (result && result.error) {
+                        log('活动', `观星自动点亮跳过: ${result.error}`, { accountId: String(process.env.FARM_ACCOUNT_ID || '') });
+                    }
+                } catch (e) {
+                    const msg = errorMessage(e);
+                    if (msg.includes('未发现星座活动') || msg.includes('1034038')) return;
+                    log('活动', `观星自动点亮失败: ${msg}`, { accountId: String(process.env.FARM_ACCOUNT_ID || '') });
+                }
+            }, { preventOverlap: true });
+            initialLoginInitialized = true;
+        }
         
         startFarmCheckLoop({ externalScheduler: true });
         startFriendCheckLoop({ externalScheduler: true });
-        automationScheduler.start();
-        // 每日礼包/任务改为跨日调度，不在农场轮询内执行
-        dailyRoutineScheduler.start();
+        automationScheduler.resume();
+        // 断线时启动延迟任务可能已错过；每次重登都重置为一次短延迟幂等补跑。
+        dailyRoutineScheduler.start(firstLogin ? 12000 : 1000);
 
         // 立即发送一次状态
         syncStatus();

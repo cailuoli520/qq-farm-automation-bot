@@ -25,6 +25,7 @@ interface MysteryShopService {
 interface WorkerMysteryShopRuntimeOptions {
     events: EventEmitter;
     getAutomation: () => DynamicRecord;
+    isConnectionReady?: () => boolean;
     isLifecycleActive: () => boolean;
     log: (tag: string, message: string, meta?: DynamicRecord) => void;
     getCurrencyBalance?: (currencyId: string) => unknown;
@@ -36,6 +37,8 @@ interface WorkerMysteryShopRuntimeOptions {
 export interface WorkerMysteryShopRuntime {
     checkNow: () => Promise<{ outcome: MysteryShopOutcome; offer?: MysteryShopOffer }>;
     handleOffer: (value: unknown, source?: string) => Promise<{ outcome: MysteryShopOutcome; offer?: MysteryShopOffer }>;
+    pause: () => void;
+    resume: () => void;
     start: () => void;
     stop: () => void;
 }
@@ -57,7 +60,9 @@ export function createWorkerMysteryShopRuntime(
         now = Date.now,
         service,
     } = options;
+    const isConnectionReady = options.isConnectionReady || (() => true);
     let started = false;
+    let paused = false;
     let lastPurchasedKey = '';
     let lastArrivalNotifyKey = '';
     let lastPurchaseNotifyKey = '';
@@ -71,7 +76,7 @@ export function createWorkerMysteryShopRuntime(
         value: unknown,
         source = 'push',
     ): Promise<{ outcome: MysteryShopOutcome; offer?: MysteryShopOffer }> {
-        if (!isLifecycleActive()) return { outcome: 'stopped' };
+        if (!isLifecycleActive() || paused || !isConnectionReady()) return { outcome: 'stopped' };
         const automation = getAutomation() || {};
         const autoBuy = automation.mystery_shop_buy === true;
         const arrivalNotify = automation.mystery_shop_arrival_notify === true;
@@ -192,7 +197,7 @@ export function createWorkerMysteryShopRuntime(
     }
 
     async function checkNow(): Promise<{ outcome: MysteryShopOutcome; offer?: MysteryShopOffer }> {
-        if (!isLifecycleActive()) return { outcome: 'stopped' };
+        if (!isLifecycleActive() || paused || !isConnectionReady()) return { outcome: 'stopped' };
         const automation = getAutomation() || {};
         if (automation.mystery_shop_buy !== true && automation.mystery_shop_arrival_notify !== true) {
             return { outcome: 'disabled' };
@@ -220,6 +225,24 @@ export function createWorkerMysteryShopRuntime(
     function start(): void {
         if (started) return;
         started = true;
+        paused = false;
+        events.on('mysteryShopNotify', onNotify);
+        pollTimer = setInterval(() => { void checkNow(); }, POLL_INTERVAL_MS);
+        pollTimer.unref?.();
+    }
+
+    function pause(): void {
+        if (!started || paused) return;
+        paused = true;
+        events.off('mysteryShopNotify', onNotify);
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = null;
+    }
+
+    function resume(): void {
+        if (!started) return start();
+        if (!paused || !isLifecycleActive() || !isConnectionReady()) return;
+        paused = false;
         events.on('mysteryShopNotify', onNotify);
         pollTimer = setInterval(() => { void checkNow(); }, POLL_INTERVAL_MS);
         pollTimer.unref?.();
@@ -228,11 +251,12 @@ export function createWorkerMysteryShopRuntime(
     function stop(): void {
         if (!started) return;
         started = false;
+        paused = false;
         events.off('mysteryShopNotify', onNotify);
         if (pollTimer) clearInterval(pollTimer);
         pollTimer = null;
         pending = null;
     }
 
-    return { checkNow, handleOffer, start, stop };
+    return { checkNow, handleOffer, pause, resume, start, stop };
 }

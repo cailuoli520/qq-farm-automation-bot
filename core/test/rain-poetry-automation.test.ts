@@ -40,6 +40,7 @@ function fakeScheduler() {
 function runtimeFixture(options: any = {}) {
     let current = Object.prototype.hasOwnProperty.call(options, 'current') ? options.current : activity();
     let enabled = options.enabled !== false;
+    let connectionReady = options.connectionReady !== false;
     let observer = null;
     const visits = [];
     const logs = [];
@@ -57,6 +58,7 @@ function runtimeFixture(options: any = {}) {
     };
     const runtime = createWorkerRainPoetryRuntime({
         getAutomation: () => ({ rain_poetry_auto: enabled }),
+        isConnectionReady: () => connectionReady,
         isLifecycleActive: () => options.lifecycle !== false,
         log: (...args) => logs.push(args),
         now: () => options.now ?? 1000000,
@@ -94,6 +96,7 @@ function runtimeFixture(options: any = {}) {
         visits,
         getObserver: () => observer,
         setEnabled: value => { enabled = value; },
+        setConnectionReady: value => { connectionReady = value; },
         setCurrent: value => { current = value; },
     };
 }
@@ -101,6 +104,34 @@ function runtimeFixture(options: any = {}) {
 test('雨落自动化配置对旧账号默认开启', () => {
     assert.equal(DEFAULT_ACCOUNT_CONFIG.automation.rain_poetry_auto, true);
     assert.equal(normalizeAccountConfig({ automation: {} }).automation.rain_poetry_auto, true);
+});
+
+test('断线期间雨落运行时停止观察和请求，重登后恢复轮询', async () => {
+    let reads = 0;
+    const fixture = runtimeFixture({
+        service: {
+            async getCurrentRainPoetryActivity() {
+                reads += 1;
+                return activity();
+            },
+        },
+    });
+
+    fixture.runtime.start();
+    assert.ok(fixture.getObserver());
+    fixture.setConnectionReady(false);
+    fixture.runtime.pause();
+    assert.equal(fixture.getObserver(), null);
+    assert.equal(await fixture.runtime.checkNow('disconnected'), 'stopped');
+    assert.equal(reads, 0);
+
+    fixture.setConnectionReady(true);
+    fixture.runtime.resume();
+    assert.ok(fixture.getObserver());
+    assert.ok(fixture.scheduler.tasks.has('rain_poetry_poll'));
+    assert.equal(await fixture.runtime.checkNow('reconnected'), 'completed');
+    assert.equal(reads, 1);
+    fixture.runtime.stop();
 });
 
 test('纯策略只根据快照生成兑换、研究、召唤和扫描计划', () => {
@@ -205,6 +236,22 @@ test('兜底扫描跳过近期已检查好友并覆盖普通巡查未进入的�
     fixture.setCurrent(activity({ balances: { collectionBottle: '1' } }));
     await fixture.runtime.checkNow('test-scan');
     assert.deepEqual(fixture.visits, [102]);
+    fixture.runtime.stop();
+});
+
+test('缺失天气字段按普通天气记为已检查，避免兜底扫描重复访问', async () => {
+    const fixture = runtimeFixture({
+        current: activity({ balances: { collectionBottle: '0' } }),
+        friends: [{ gid: 101, name: '好友A', weather: { thunderstorm: true } }],
+    });
+    fixture.runtime.start();
+    await fixture.runtime.checkNow('test-init');
+    await fixture.getObserver()({
+        source: 'help', friendGid: '101', friendName: '好友A', enterReply: {},
+    });
+    fixture.setCurrent(activity({ balances: { collectionBottle: '1' } }));
+    await fixture.runtime.checkNow('test-scan');
+    assert.deepEqual(fixture.visits, []);
     fixture.runtime.stop();
 });
 

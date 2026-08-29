@@ -2,15 +2,21 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
     analyzeLands,
+    buildFarmSocialEventDetails,
     buildLandMap,
     buildSlaveToMasterMap,
     classifyHarvestedLandsByMap,
     filterLandIdsByTypes,
     findEmptyLandQuads,
     getDisplayLandContext,
+    getCleanableFarmSocialEventItemIds,
+    getConfirmedFarmSocialEventItemIds,
     getLandLifecycleState,
     getPlantInteractionEffects,
+    getPlantMutantConfigIds,
+    getPurpleCrystalResonanceExpBonus,
     getLandTypeByLevel,
+    normalizeLandBuff,
     normalizeFertilizerLandTypes,
 } = require('../src/services/farm-land-domain');
 
@@ -55,6 +61,37 @@ test('仅把当前黄金虫和足球状态识别为农场主可清理互动', ()
         },
     ]);
     assert.deepEqual(result.needInteractionCleanup, [4]);
+});
+
+test('乌云使用实时互动记录识别，青蛙使用农场级事件识别', () => {
+    const cloudPlant = {
+        interaction_targets: [{ item_id: 5006, host_gid: 8, timestamp: 102, land_id: 4 }],
+        field_40: [{ value_1: 8, value_2: 1 }],
+    };
+    const historicalCloudPlant = { field_40: [{ value_1: 8, value_2: 1 }] };
+
+    assert.deepEqual(getPlantInteractionEffects(cloudPlant).map(effect => effect.itemName), ['乌云']);
+    assert.deepEqual(analyzeLands([
+        { id: 4, unlocked: true, plant: { id: 20004, phases: [phase(4)], ...cloudPlant } },
+        { id: 5, unlocked: true, plant: { id: 20005, phases: [phase(4)], ...historicalCloudPlant } },
+    ]).needInteractionCleanup, [4]);
+
+    const reply = { social_events: [{ item_id: 5005, visitor_gid: 9, timestamp: 100 }] };
+    assert.deepEqual(getCleanableFarmSocialEventItemIds(reply), [5005]);
+    assert.deepEqual(getConfirmedFarmSocialEventItemIds({
+        social_event_rewards: [
+            { item_id: 5005, reward: { id: 1101, count: 30 } },
+            { item_id: 5005, reward: { id: 1101, count: 30 } },
+        ],
+    }), [5005]);
+    assert.deepEqual(getConfirmedFarmSocialEventItemIds({ social_event_rewards: [] }), []);
+    assert.deepEqual(buildFarmSocialEventDetails(reply), [{
+        itemId: '5005',
+        itemName: '青蛙使坏',
+        visitorGid: '9',
+        occurredAt: '100',
+        cleanable: true,
+    }]);
 });
 
 test('成对返回的互动 use 和 target 合并为一条当前效果', () => {
@@ -115,6 +152,32 @@ test('土地类型规范化去重并按选择范围过滤', () => {
     assert.deepEqual(filterLandIdsByTypes([1, 2, 3, 4], typesById, ['red', 'gold']), [2, 3]);
     assert.deepEqual(filterLandIdsByTypes([1, 2, 3, 4], typesById, ['purple-gold']), [4]);
     assert.deepEqual(filterLandIdsByTypes([1, 2, 3], typesById, []), []);
+});
+
+test('紫晶共鸣完全使用服务端经验 Buff 并要求紫金土地与变异作物', () => {
+    const land = {
+        level: 5,
+        buff: {
+            plant_yield_bonus: 3000,
+            planting_time_reduction: 1500,
+            plant_exp_bonus: 2500,
+        },
+    };
+    const plant = {
+        mutant_config_ids: [12],
+    };
+
+    assert.deepEqual(normalizeLandBuff(land), {
+        plantYieldBonus: 3000,
+        plantingTimeReduction: 1500,
+        plantExpBonus: 2500,
+    });
+    assert.deepEqual(getPlantMutantConfigIds(plant, { mutants: [{ mutant_config_id: 13 }] }), ['12', '13']);
+    assert.equal(getPurpleCrystalResonanceExpBonus(land, ['12']), 2500);
+    assert.equal(getPurpleCrystalResonanceExpBonus({ ...land, buff: { ...land.buff, plant_exp_bonus: 1800 } }, ['12']), 1800);
+    assert.equal(getPurpleCrystalResonanceExpBonus({ ...land, buff: { ...land.buff, plant_exp_bonus: 0 } }, ['12']), 0);
+    assert.equal(getPurpleCrystalResonanceExpBonus(land, []), 0);
+    assert.equal(getPurpleCrystalResonanceExpBonus({ ...land, level: 4 }, ['12']), 0);
 });
 
 test('收获后土地按空地、枯死、生长和未知状态分类', () => {

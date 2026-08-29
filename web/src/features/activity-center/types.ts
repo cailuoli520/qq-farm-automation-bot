@@ -312,6 +312,9 @@ export interface RainPoetryActivityDto {
 export interface RainWeatherCheckDto {
   host: { gid: string, name: string, avatarUrl: string, isSelf: boolean }
   weather: RainWeatherDto
+  cached: boolean
+  inspectedAt: number | null
+  pet: { id: string, name: string, image: string } | null
 }
 
 export interface ActivityActionDto {

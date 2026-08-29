@@ -15,6 +15,9 @@ const emit = defineEmits<{
 }>()
 
 const land = computed(() => props.land)
+const purpleCrystalResonancePercent = computed(() => (
+  Math.max(0, Number(land.value?.purpleCrystalResonanceExpBonus) || 0) / 100
+))
 const now = ref(Date.now())
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -196,6 +199,13 @@ function requestFertilize(event: Event, fertilizerType: 'normal' | 'organic') {
 
     <!-- Status Badges -->
     <div class="mt-auto flex origin-bottom scale-90 gap-0.5 text-[10px]">
+      <span
+        v-if="purpleCrystalResonancePercent > 0"
+        class="inline-flex items-center gap-0.5 rounded bg-violet-100 px-1 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
+        :title="`紫金土地上的变异作物经验 +${purpleCrystalResonancePercent}%`"
+      >
+        <span class="i-carbon-flash-filled" />共鸣 +{{ purpleCrystalResonancePercent }}%
+      </span>
       <span v-if="land.needWater" class="rounded bg-blue-100 px-0.5 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">水</span>
       <span v-if="land.needWeed" class="rounded bg-green-100 px-0.5 text-green-700 dark:bg-green-900/30 dark:text-green-400">草</span>
       <span v-if="land.needBug" class="rounded bg-red-100 px-0.5 text-red-700 dark:bg-red-900/30 dark:text-red-400">虫</span>

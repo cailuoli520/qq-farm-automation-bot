@@ -288,20 +288,33 @@ async function socket(host: string, port: number, timeout = 3e4): Promise<{
   const s = net.createConnection({ host, port });
   const chunks: Buffer[] = [];
   let ended = false;
+  let socketError: Error | null = null;
   s.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
   s.on("end", () => {
     ended = true;
   });
+  s.on("error", (error) => {
+    socketError = error;
+  });
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("connection timeout")), timeout);
-    s.once("connect", () => {
+    const onConnect = (): void => {
       clearTimeout(timer);
+      s.off("error", onError);
       resolve();
-    });
-    s.once("error", (error) => {
+    };
+    const onError = (error: Error): void => {
       clearTimeout(timer);
+      s.off("connect", onConnect);
       reject(error);
-    });
+    };
+    const timer = setTimeout(() => {
+      s.off("connect", onConnect);
+      s.off("error", onError);
+      s.destroy();
+      reject(new Error("connection timeout"));
+    }, timeout);
+    s.once("connect", onConnect);
+    s.once("error", onError);
   });
   let offset = 0;
   async function take(): Promise<ProtocolRecord> {
@@ -316,7 +329,8 @@ async function socket(host: string, port: number, timeout = 3e4): Promise<{
           return out;
         }
       }
-      if (ended || Date.now() > until) throw new Error("socket read timeout");
+      if (socketError) throw socketError;
+      if (ended || s.destroyed || Date.now() > until) throw new Error("socket read timeout");
       await new Promise<void>((resolve) => setTimeout(resolve, 10));
     }
   }
@@ -324,7 +338,22 @@ async function socket(host: string, port: number, timeout = 3e4): Promise<{
     s,
     take,
     send: (data: Uint8Array) => new Promise<void>((resolve, reject) => {
-      s.write(data, (error) => error ? reject(error) : resolve());
+      let settled = false;
+      const finish = (error?: Error | null): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        s.off("error", onError);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onError = (error: Error): void => finish(error);
+      const timer = setTimeout(() => {
+        s.destroy();
+        finish(new Error("socket write timeout"));
+      }, timeout);
+      s.once("error", onError);
+      s.write(data, (error) => finish(error || null));
     }),
     close: () => s.destroy()
   };
@@ -442,8 +471,22 @@ function errorMessage(error: unknown): string {
 }
 
 async function targets(kind: "long" | "short"): Promise<ProtocolTarget[]> {
-  const r = await fetch("http://aedns.weixin.qq.com/cgi-bin/default/getdns?clientversion=0&devicetype=Windows&uin=0&format=json", { headers: { "User-Agent": "MicroMessenger Client" } });
-  const data: unknown = await r.json();
+  const fallback = [{ ip: kind === "long" ? "180.153.202.85" : "120.241.131.173", port: kind === "long" ? 8080 : 80 }];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  let data: unknown;
+  try {
+    const r = await fetch("http://aedns.weixin.qq.com/cgi-bin/default/getdns?clientversion=0&devicetype=Windows&uin=0&format=json", {
+      headers: { "User-Agent": "MicroMessenger Client" },
+      signal: controller.signal,
+    });
+    if (!r.ok) return fallback;
+    data = await r.json();
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timer);
+  }
   const dns = asRecord(asRecord(data).dns);
   const domainList = Array.isArray(dns.domainlist) ? dns.domainlist.map(asRecord) : [];
   const item = domainList.find((entry) => entry.name === (kind === "long" ? "longcloud.weixin.com" : "shortcloud.weixin.com"));
@@ -456,7 +499,7 @@ async function targets(kind: "long" | "short"): Promise<ProtocolTarget[]> {
   const ipList = Array.isArray(item?.iplist) ? item.iplist.map(asRecord) : [];
   const ips = ipList.map((entry) => entry.ip).filter((ip): ip is string => typeof ip === "string" && ip.length > 0);
   const out = ips.flatMap((ip) => orderedPorts.map((port) => ({ ip, port })));
-  return out.length ? out : [{ ip: kind === "long" ? "180.153.202.85" : "120.241.131.173", port: kind === "long" ? 8080 : 80 }];
+  return out.length ? out : fallback;
 }
 async function getNativeWxLoginCode(loginBuffer: string, appId: string): Promise<string> {
   const { req, device, host } = manualRequest(loginBuffer, crypto.randomBytes(32));

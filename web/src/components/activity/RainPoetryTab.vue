@@ -22,7 +22,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  checkWeather: [friendGid: string]
+  checkWeather: [friendGid: string, options?: { cacheOnly?: boolean, forceRefresh?: boolean }]
   refreshFriends: []
   exchange: [goodsId: string]
   collect: [friendGid: string]
@@ -48,7 +48,11 @@ const researchById = computed(() => new Map((props.activity?.researchNodes || []
 const completedResearchCount = computed(() => props.activity?.researchNodes.filter(node => node.claimed).length || 0)
 const nextResearchNode = computed(() => props.activity?.researchNodes.find(node => !node.claimed) || null)
 
-watch(selectedFriendGid, () => confirmation.value = null)
+watch(selectedFriendGid, (friendGid) => {
+  confirmation.value = null
+  if (friendGid)
+    emit('checkWeather', friendGid, { cacheOnly: true })
+})
 
 function friendName(friend: any) {
   return String(friend?.remark || friend?.name || `好友 ${friend?.gid || ''}`)
@@ -170,6 +174,12 @@ function collectionButtonLabel(weather: RainWeather) {
   return '使用采集瓶'
 }
 
+function inspectedTime(value: number | null) {
+  if (!value)
+    return ''
+  return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+}
+
 function confirmAction() {
   const action = confirmation.value
   if (!action)
@@ -245,7 +255,7 @@ function confirmAction() {
               {{ friendName(friend) }}
             </option>
           </select>
-          <button :disabled="!selectedFriendGid || busy || weatherLoading" @click="emit('checkWeather', selectedFriendGid)">
+          <button :disabled="!selectedFriendGid || busy || weatherLoading" @click="emit('checkWeather', selectedFriendGid, { forceRefresh: true })">
             {{ weatherLoading ? '检查中' : '检查天气' }}
           </button>
         </div>
@@ -255,6 +265,8 @@ function confirmAction() {
         <div v-else-if="weatherCheck && weatherCheck.host.gid === selectedFriendGid" class="weather-result" :class="{ storm: weatherCheck.weather.thunderstorm }">
           <div class="weather-result-main">
             <span>{{ weatherCheck.host.name }}</span><strong>{{ weatherCheck.weather.name }}</strong><small>{{ collectionStatus(weatherCheck.weather) }}</small>
+            <small v-if="weatherCheck.cached && weatherCheck.inspectedAt">巡查缓存 · {{ inspectedTime(weatherCheck.inspectedAt) }}</small>
+            <small v-if="weatherCheck.pet">看家宠物：{{ weatherCheck.pet.name }}</small>
           </div>
           <button :disabled="busy || !weatherCheck.weather.thunderstorm || !activity.actions.collect.enabled" @click="confirmation = { kind: 'collect', id: weatherCheck.host.gid, title: '采集好友雷雨', detail: `将在 ${weatherCheck.host.name} 的农场消耗 1 个天气采集瓶；成功后获得雷雨召唤瓶。` }">
             {{ collectionButtonLabel(weatherCheck.weather) }}

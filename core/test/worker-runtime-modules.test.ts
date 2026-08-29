@@ -14,18 +14,21 @@ test('Worker API 调度器统一返回成功、异常和未知方法响应', asy
     const handler = createWorkerApiHandler({
         echo: args => ({ value: args[0] }),
         fail: () => { throw new Error('boom'); },
+        busy: () => { throw Object.assign(new Error('稍后重试'), { code: 'FRIEND_TASK_BUSY', retryAfterMs: 5000 }); },
     }, response => responses.push(response));
 
     await handler({ type: 'api_call', id: 1, method: 'echo', args: ['ok'] });
     await handler({ type: 'api_call', id: 2, method: 'fail', args: [] });
     await handler({ type: 'api_call', id: 3, method: 'missing', args: [] });
     await handler({ type: 'api_call', id: 4, method: 'toString', args: [] });
+    await handler({ type: 'api_call', id: 5, method: 'busy', args: [] });
 
     assert.deepEqual(responses, [
         { type: 'api_response', id: 1, result: { value: 'ok' }, error: undefined },
-        { type: 'api_response', id: 2, result: null, error: 'boom' },
-        { type: 'api_response', id: 3, result: null, error: 'Unknown method' },
-        { type: 'api_response', id: 4, result: null, error: 'Unknown method' },
+        { type: 'api_response', id: 2, result: null, error: { message: 'boom' } },
+        { type: 'api_response', id: 3, result: null, error: { message: 'Unknown method', code: 'UNKNOWN_WORKER_API_METHOD' } },
+        { type: 'api_response', id: 4, result: null, error: { message: 'Unknown method', code: 'UNKNOWN_WORKER_API_METHOD' } },
+        { type: 'api_response', id: 5, result: null, error: { message: '稍后重试', code: 'FRIEND_TASK_BUSY', retryAfterMs: 5000 } },
     ]);
 });
 
@@ -298,6 +301,7 @@ interface AutomationFixtureOptions {
 
 function createAutomationFixture(options: AutomationFixtureOptions = {}) {
     let now = 1000;
+    let loginReady = options.loginReady !== false;
     let scheduledTask = null;
     let scheduleCount = 0;
     let clearCount = 0;
@@ -339,7 +343,7 @@ function createAutomationFixture(options: AutomationFixtureOptions = {}) {
         },
         getAutomation: () => automation,
         isHelpExpLimitReached: () => !!options.helpExpLimitReached,
-        isLoginReady: () => options.loginReady !== false,
+        isLoginReady: () => loginReady,
         log: (...args) => logs.push(args),
         now: () => now,
         async openFertilizerGiftPacksSilently() { events.push('fertilizer'); },
@@ -356,6 +360,7 @@ function createAutomationFixture(options: AutomationFixtureOptions = {}) {
             await scheduledTask();
         },
         runtime,
+        setLoginReady(value) { loginReady = value; },
         setNow(value) { now = value; },
     };
 }
@@ -417,6 +422,24 @@ test('帮助巡查失败会记录错误并继续安排下一轮', async () => {
     assert.equal(fixture.getScheduleCount(), 2);
 });
 
+test('断线暂停会撤销下一轮任务，重登后从原调度器恢复', async () => {
+    const fixture = createAutomationFixture({ automation: { farm: true } });
+
+    fixture.runtime.start();
+    assert.equal(fixture.getScheduleCount(), 1);
+    fixture.setLoginReady(false);
+    fixture.runtime.pause();
+    assert.equal(fixture.getClearCount(), 2);
+
+    fixture.setNow(2000);
+    fixture.setLoginReady(true);
+    fixture.runtime.resume();
+    assert.equal(fixture.getScheduleCount(), 2);
+    await fixture.runScheduled();
+    assert.deepEqual(fixture.events, ['farm']);
+    assert.equal(fixture.getScheduleCount(), 3);
+});
+
 test('状态倒计时对过期任务归零并合并好友巡查时间', () => {
     assert.deepEqual(buildNextChecks({ farm: 5000, help: 9000, steal: 7000 }, 6000), {
         farmRemainSec: 0,
@@ -440,6 +463,7 @@ test('状态同步在内容不变时去重，变化或超过心跳时间后重�
         canSend: () => canSend,
         getAutomationState: () => ({ farm: true }),
         getConfigRevision: () => 7,
+        getConnectionStateValue: () => ({ ready: true, phase: 'ready', reconnectAttempt: 0 }),
         getLoginReady: () => true,
         getPreferredSeedValue: () => 20001,
         getScheduleTimes: () => ({ farm: 0, help: 0, steal: 0 }),
@@ -466,6 +490,35 @@ test('状态同步在内容不变时去重，变化或超过心跳时间后重�
     syncStatus();
     assert.equal(messages.length, 3);
     assert.equal(buildCount, 4);
+});
+
+test('认证中状态即使 loginReady 残留也必须展示为离线', () => {
+    const messages = [];
+    const syncStatus = createWorkerStatusSynchronizer({
+        buildBaseStatus: () => ({ stats: {}, levelProgress: null }),
+        canSend: () => true,
+        getAutomationState: () => ({}),
+        getConfigRevision: () => 0,
+        getConnectionStateValue: () => ({
+            ready: false,
+            phase: 'authenticating',
+            reason: '等待 LoginReply',
+            revision: 9,
+            reconnectAttempt: 2,
+            changedAt: 123,
+        }),
+        getLoginReady: () => true,
+        getPreferredSeedValue: () => null,
+        getScheduleTimes: () => ({ farm: 0, help: 0, steal: 0 }),
+        now: () => 1000,
+        sendToMaster: message => messages.push(message),
+    });
+
+    syncStatus();
+    assert.equal(messages[0].data.connection.connected, false);
+    assert.equal(messages[0].data.connection.phase, 'authenticating');
+    assert.equal(messages[0].data.connection.revision, 9);
+    assert.equal(messages[0].data.connection.reconnectAttempt, 2);
 });
 
 export {};

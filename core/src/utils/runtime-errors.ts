@@ -7,6 +7,7 @@ const SOFT_RUNTIME_MESSAGES = new Set([
 
 const SOFT_RUNTIME_PREFIXES = [
     '连接未打开:',
+    '连接未就绪:',
     '账号尚未登录',
     '请求已中断:',
 ];

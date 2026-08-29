@@ -170,9 +170,17 @@ message AllLandsRequest {
     int64 host_gid = 1;      // 0或自己的GID=查看自己
 }
 
+// 农场级社交事件。5005=青蛙使坏瓶，不绑定单独地块。
+message FarmSocialEvent {
+    int64 item_id = 1;
+    int64 visitor_gid = 2;
+    int64 timestamp = 3;
+}
+
 message AllLandsReply {
     repeated LandInfo lands = 1;
     repeated OperationLimit operation_limits = 2;
+    repeated FarmSocialEvent social_events = 3;
 }
 
 // --- 收获 ---
@@ -199,6 +207,8 @@ message FarmingRequest {
     int64 host_gid = 2;
     int32 field_3 = 3;
     int32 field_4 = 4;  // 好友帮助固定为 2；自家一键务农为 0
+    // 自家农场待清理的农场级社交道具 ID。
+    repeated int64 social_event_item_ids = 5 [packed = true];
 }
 
 message FarmingOperationResult {
@@ -206,11 +216,17 @@ message FarmingOperationResult {
     corepb.Item item = 2;
 }
 
+message FarmingSocialEventReward {
+    int64 item_id = 1;
+    corepb.Item reward = 2;
+}
+
 message FarmingReply {
     repeated LandInfo land = 1;
     repeated OperationLimit operation_limits = 2;
     // 同一土地执行了多种帮忙操作时可能出现多次。
     repeated FarmingOperationResult operation_results = 3;
+    repeated FarmingSocialEventReward social_event_rewards = 4;
 }
 
 // --- 浇水 ---
@@ -354,4 +370,10 @@ message CheckCanOperateReply {
 message LandsNotify {
     repeated LandInfo lands = 1;   // 变化的土地列表
     int64 host_gid = 2;            // 农场主GID
+}
+
+// 青蛙等农场级社交事件变化；清空事件时 social_events 为空。
+message FarmSocialEventsNotify {
+    repeated FarmSocialEvent social_events = 1;
+    int64 host_gid = 2;
 }

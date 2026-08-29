@@ -22,6 +22,7 @@ export const useFarmStore = defineStore('farm', () => {
   const seeds = ref<any[]>([])
   const summary = ref<any>({})
   const career = ref<any>(null)
+  const socialEvents = ref<any[]>([])
   const loading = ref(false)
   let activeAccountId = ''
   let landsRequestVersion = 0
@@ -36,6 +37,7 @@ export const useFarmStore = defineStore('farm', () => {
     seeds.value = []
     summary.value = {}
     career.value = null
+    socialEvents.value = []
     loading.value = false
   }
 
@@ -53,6 +55,7 @@ export const useFarmStore = defineStore('farm', () => {
         lands.value = data.data.lands || []
         summary.value = data.data.summary || {}
         career.value = data.data.career || null
+        socialEvents.value = data.data.socialEvents || []
       }
     }
     finally {
@@ -109,5 +112,5 @@ export const useFarmStore = defineStore('farm', () => {
     return data.data
   }
 
-  return { lands, summary, career, seeds, loading, activateAccount, fetchLands, fetchSeeds, operate, fertilizeLand }
+  return { lands, summary, career, socialEvents, seeds, loading, activateAccount, fetchLands, fetchSeeds, operate, fertilizeLand }
 })

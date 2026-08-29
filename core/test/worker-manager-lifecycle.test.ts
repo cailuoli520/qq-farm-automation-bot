@@ -61,11 +61,13 @@ class FakeWorker extends EventEmitter {
     }
 }
 
-function createHarness() {
+function createHarness(options: { offlineAutoDeleteMs?: number } = {}) {
     FakeWorker.instances = [];
     const scheduler = new FakeScheduler();
     const workers = {};
     const accountLogs = [];
+    const deletedAccountIds = [];
+    const account = { id: '12', name: '测试账号', platform: 'qq', code: 'login-code' };
     let now = 0;
     const manager = createWorkerManager({
         WorkerThread: FakeWorker,
@@ -81,23 +83,23 @@ function createHarness() {
         },
         normalizeStatusForPanel: value => value,
         buildConfigSnapshotForAccount: () => ({ automation: {} }),
-        getOfflineAutoDeleteMs: () => Number.POSITIVE_INFINITY,
+        getOfflineAutoDeleteMs: () => options.offlineAutoDeleteMs ?? Number.POSITIVE_INFINITY,
         triggerOfflineReminder: () => {},
         addOrUpdateAccount: () => {},
-        deleteAccount: () => {},
+        deleteAccount: accountId => deletedAccountIds.push(accountId),
         getAutoRelogin: () => null,
-        getAccounts: () => ({ accounts: [] }),
+        getAccounts: () => ({ accounts: [account] }),
         reauthRequiredStates: new Map(),
         scheduler,
         now: () => now,
     });
-    const account = { id: '12', name: '测试账号', platform: 'qq', code: 'login-code' };
     return {
         account,
         manager,
         scheduler,
         workers,
         accountLogs,
+        deletedAccountIds,
         advance(ms) { now += ms; },
     };
 }
@@ -197,25 +199,148 @@ test('Worker API 超时和进程退出都会拒绝并释放在途请求', async 
     assert.equal(exitHarness.scheduler.tasks.has('api_timeout_12_1'), false);
 });
 
-test('watchdog 连续卡死只自动重启三次并在第四次停止', async () => {
+test('watchdog 每次重启后即使恢复登录，连续卡死仍最多自动重启三次', async () => {
     const harness = createHarness();
     harness.manager.startWorker(harness.account);
 
     for (let attempt = 1; attempt <= 4; attempt += 1) {
+        FakeWorker.instances.at(-1).emit('message', {
+            type: 'status_sync',
+            data: { connection: { connected: true, phase: 'ready' }, status: {} },
+        });
         harness.advance(90000);
         await harness.scheduler.run('watchdog_12');
-        assert.equal(FakeWorker.instances.at(-1).terminated, true);
-        await settleEvents();
-        await harness.scheduler.run('watchdog_restart_12');
-        await settleEvents();
-
         if (attempt <= 3) {
+            assert.equal(FakeWorker.instances.at(-1).terminated, true);
+            await settleEvents();
+            await harness.scheduler.run('watchdog_restart_12');
+            await settleEvents();
             assert.ok(harness.workers[harness.account.id]);
         } else {
+            assert.equal(FakeWorker.instances.at(-1).terminated, true);
+            await settleEvents();
             assert.equal(harness.workers[harness.account.id], undefined);
+            assert.equal(harness.scheduler.tasks.has('watchdog_restart_12'), false);
         }
     }
 
     assert.equal(FakeWorker.instances.length, 4);
+});
+
+test('watchdog 重启后持续健康十分钟才重置连续卡死计数', async () => {
+    const harness = createHarness();
+    harness.manager.startWorker(harness.account);
+
+    harness.advance(90000);
+    await harness.scheduler.run('watchdog_12');
+    await settleEvents();
+    await harness.scheduler.run('watchdog_restart_12');
+    await settleEvents();
+
+    const healthyWorker = FakeWorker.instances.at(-1);
+    healthyWorker.emit('message', {
+        type: 'status_sync',
+        data: { connection: { connected: true, phase: 'ready' }, status: {} },
+    });
+    for (let index = 0; index < 20; index += 1) {
+        harness.advance(30000);
+        healthyWorker.emit('message', { type: 'pong' });
+        await harness.scheduler.run('watchdog_12');
+    }
+
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+        harness.advance(90000);
+        await harness.scheduler.run('watchdog_12');
+        if (attempt <= 3) {
+            await settleEvents();
+            await harness.scheduler.run('watchdog_restart_12');
+            await settleEvents();
+        }
+    }
+
+    assert.equal(FakeWorker.instances.length, 5);
+    assert.equal(harness.workers[harness.account.id], undefined);
+});
+
+test('网关连续十分钟未恢复时由主进程重建 Worker', async () => {
+    const harness = createHarness();
+    harness.manager.startWorker(harness.account);
+    const first = FakeWorker.instances[0];
+
+    harness.advance(1);
+    first.emit('message', {
+        type: 'status_sync',
+        data: { connection: { connected: false, phase: 'backoff' }, status: {} },
+    });
+    harness.advance(10 * 60 * 1000);
+    first.emit('message', {
+        type: 'status_sync',
+        data: { connection: { connected: false, phase: 'backoff' }, status: {} },
+    });
+
+    assert.equal(first.terminated, true);
+    assert.equal(harness.workers[harness.account.id], undefined);
+    assert.equal(harness.accountLogs.at(-1).action, 'self_heal_restart');
+    await settleEvents();
+    await harness.scheduler.run('watchdog_restart_12');
+    await settleEvents();
+    assert.ok(harness.workers[harness.account.id]);
+    assert.equal(harness.workers[harness.account.id].disconnectedSince, 1);
+    assert.equal(harness.workers[harness.account.id].connectionStallSince, 0);
+});
+
+test('网络自愈重启保留连续离线计时，达到阈值后仍会自动删除账号', async () => {
+    const harness = createHarness({ offlineAutoDeleteMs: 15 * 60 * 1000 });
+    harness.manager.startWorker(harness.account);
+    const first = FakeWorker.instances[0];
+
+    harness.advance(1);
+    first.emit('message', {
+        type: 'status_sync',
+        data: { connection: { connected: false, phase: 'backoff' }, status: {} },
+    });
+    harness.advance(10 * 60 * 1000);
+    first.emit('message', {
+        type: 'status_sync',
+        data: { connection: { connected: false, phase: 'backoff' }, status: {} },
+    });
+    await settleEvents();
+    await harness.scheduler.run('watchdog_restart_12');
+    await settleEvents();
+
+    const second = FakeWorker.instances.at(-1);
+    second.emit('message', {
+        type: 'status_sync',
+        data: { connection: { connected: false, phase: 'backoff' }, status: {} },
+    });
+    harness.advance(5 * 60 * 1000);
+    second.emit('message', {
+        type: 'status_sync',
+        data: { connection: { connected: false, phase: 'backoff' }, status: {} },
+    });
+
+    assert.deepEqual(harness.deletedAccountIds, ['12']);
+    assert.equal(harness.accountLogs.at(-1).action, 'offline_delete');
+    assert.equal(harness.scheduler.tasks.has('watchdog_restart_12'), false);
+});
+
+test('等待重新授权时不会触发长离线自愈重启', () => {
+    const harness = createHarness();
+    harness.manager.startWorker(harness.account);
+    const worker = FakeWorker.instances[0];
+
+    harness.advance(1);
+    worker.emit('message', {
+        type: 'status_sync',
+        data: { connection: { connected: false, phase: 'reauth-required' }, status: {} },
+    });
+    harness.advance(20 * 60 * 1000);
+    worker.emit('message', {
+        type: 'status_sync',
+        data: { connection: { connected: false, phase: 'reauth-required' }, status: {} },
+    });
+
+    assert.equal(worker.terminated, false);
+    assert.ok(harness.workers[harness.account.id]);
 });
 export {};

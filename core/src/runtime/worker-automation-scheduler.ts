@@ -20,7 +20,9 @@ interface WorkerAutomationSchedulerOptions {
 
 export interface WorkerAutomationScheduler {
     getScheduleTimes: () => { farm: number; help: number; steal: number };
+    pause: () => void;
     reset: () => void;
+    resume: () => void;
     scheduleNext: () => void;
     start: () => void;
     stop: () => void;
@@ -61,6 +63,7 @@ export function createWorkerAutomationScheduler(
         scheduler,
     } = options;
     let running = false;
+    let paused = false;
     let farmTaskRunning = false;
     let helpTaskRunning = false;
     let stealTaskRunning = false;
@@ -152,7 +155,7 @@ export function createWorkerAutomationScheduler(
     }
 
     async function runTick(): Promise<void> {
-        if (!running || !isLoginReady()) return;
+        if (!running || paused || !isLoginReady()) return;
         const currentTime = now();
         const dueFarm = currentTime >= nextFarmRunAt;
         const dueHelp = currentTime >= nextHelpRunAt;
@@ -167,7 +170,7 @@ export function createWorkerAutomationScheduler(
     }
 
     function scheduleNext(): void {
-        if (!running) return;
+        if (!running || paused) return;
         scheduler.clear('unified_next_tick');
         if (!isLoginReady()) return;
 
@@ -191,12 +194,27 @@ export function createWorkerAutomationScheduler(
     function start(): void {
         if (running) return;
         running = true;
+        paused = false;
         reset();
+        scheduleNext();
+    }
+
+    function pause(): void {
+        if (!running || paused) return;
+        paused = true;
+        scheduler.clear('unified_next_tick');
+    }
+
+    function resume(): void {
+        if (!running) return start();
+        if (!paused) return;
+        paused = false;
         scheduleNext();
     }
 
     function stop(): void {
         running = false;
+        paused = false;
         farmTaskRunning = false;
         helpTaskRunning = false;
         stealTaskRunning = false;
@@ -209,7 +227,9 @@ export function createWorkerAutomationScheduler(
             help: nextHelpRunAt,
             steal: nextStealRunAt,
         }),
+        pause,
         reset,
+        resume,
         scheduleNext,
         start,
         stop,

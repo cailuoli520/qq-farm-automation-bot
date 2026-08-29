@@ -7,8 +7,16 @@ export type LandType = 'purple-gold' | 'gold' | 'black' | 'red' | 'normal';
 
 export const ALL_FERTILIZER_LAND_TYPES: LandType[] = ['purple-gold', 'gold', 'black', 'red', 'normal'];
 
-// 抓包确认：这两类当前互动状态可由农场主通过 Farming 一键清理。
-const OWNER_CLEANABLE_INTERACTION_ITEM_IDS = new Set(['301101', '301102']);
+// 抓包确认：这些当前互动状态可由农场主通过 Farming 一键清理。
+// 乌云必须以实时互动记录为准，不能用清理后仍可能保留的 field_40 历史记录判断。
+const OWNER_CLEANABLE_INTERACTION_ITEM_IDS = new Set(['301101', '301102', '5006']);
+const OWNER_CLEANABLE_FARM_SOCIAL_EVENT_ITEM_IDS = new Set(['5005']);
+const INTERACTION_ITEM_FALLBACK_NAMES: Record<string, string> = {
+    '5005': '青蛙使坏',
+    '5006': '乌云',
+    '301101': '黄金虫',
+    '301102': '足球',
+};
 
 function normalizePositiveId(value: unknown): string {
     if (value === null || value === undefined) return '';
@@ -33,7 +41,7 @@ function interactionEffect(entry: DynamicRecord): DynamicRecord | null {
     const item = getItemById(Number(itemId));
     return {
         itemId,
-        itemName: String(item?.name || (itemId === '301101' ? '黄金虫' : itemId === '301102' ? '足球' : `道具${itemId}`)),
+        itemName: String(item?.name || INTERACTION_ITEM_FALLBACK_NAMES[itemId] || `道具${itemId}`),
         effectType: toNum(entry?.effect_type),
         landId: normalizePositiveId(entry?.land_id),
         hostGid: normalizePositiveId(entry?.host_gid),
@@ -88,6 +96,43 @@ export function getPlantInteractionEffects(plant: DynamicRecord | null | undefin
 export function hasOwnerCleanableInteraction(plant: DynamicRecord | null | undefined): boolean {
     return getPlantInteractionEffects(plant).some(effect => effect.cleanable);
 }
+
+function farmSocialEvents(eventsOrReply: unknown): DynamicRecord[] {
+    if (Array.isArray(eventsOrReply)) return eventsOrReply as DynamicRecord[];
+    const events = (eventsOrReply as DynamicRecord | null | undefined)?.social_events;
+    return Array.isArray(events) ? events : [];
+}
+
+export function getCleanableFarmSocialEventItemIds(eventsOrReply: unknown): number[] {
+    return [...new Set(farmSocialEvents(eventsOrReply)
+        .map(event => normalizePositiveId(event?.item_id))
+        .filter(itemId => OWNER_CLEANABLE_FARM_SOCIAL_EVENT_ITEM_IDS.has(itemId))
+        .map(Number))];
+}
+
+export function getConfirmedFarmSocialEventItemIds(reply: unknown): number[] {
+    const rewards = (reply as DynamicRecord | null | undefined)?.social_event_rewards;
+    if (!Array.isArray(rewards)) return [];
+    return [...new Set(rewards
+        .map(entry => normalizePositiveId(entry?.item_id))
+        .filter(Boolean)
+        .map(Number))];
+}
+
+export function buildFarmSocialEventDetails(eventsOrReply: unknown): DynamicRecord[] {
+    return farmSocialEvents(eventsOrReply).flatMap((event) => {
+        const itemId = normalizePositiveId(event?.item_id);
+        if (!itemId) return [];
+        const item = getItemById(Number(itemId));
+        return [{
+            itemId,
+            itemName: String(item?.name || INTERACTION_ITEM_FALLBACK_NAMES[itemId] || `道具${itemId}`),
+            visitorGid: normalizePositiveId(event?.visitor_gid),
+            occurredAt: normalizePositiveId(event?.timestamp),
+            cleanable: OWNER_CLEANABLE_FARM_SOCIAL_EVENT_ITEM_IDS.has(itemId),
+        }];
+    });
+}
 const FERTILIZER_LAND_TYPE_LABELS: Record<LandType, string> = {
     'purple-gold': '紫金土地',
     gold: '金土地',
@@ -122,6 +167,34 @@ export function getCurrentPhase(
     }
     if (debug) console.warn(`    ${landLabel}   → 所有阶段都在未来，使用第一个: ${PHASE_NAMES[phases[0].phase] || phases[0].phase}`);
     return phases[0];
+}
+
+export function normalizeLandBuff(land: DynamicRecord | null | undefined) {
+    return {
+        plantYieldBonus: Math.max(0, toNum(land?.buff?.plant_yield_bonus)),
+        plantingTimeReduction: Math.max(0, toNum(land?.buff?.planting_time_reduction)),
+        plantExpBonus: Math.max(0, toNum(land?.buff?.plant_exp_bonus)),
+    };
+}
+
+export function getPlantMutantConfigIds(
+    plant: DynamicRecord | null | undefined,
+    currentPhase: DynamicRecord | null | undefined = null,
+): string[] {
+    const direct = Array.isArray(plant?.mutant_config_ids) ? plant.mutant_config_ids : [];
+    const phaseMutants = Array.isArray(currentPhase?.mutants) ? currentPhase.mutants : [];
+    return [...new Set([
+        ...direct.map(normalizePositiveId),
+        ...phaseMutants.map(mutant => normalizePositiveId(mutant?.mutant_config_id)),
+    ].filter(Boolean))];
+}
+
+export function getPurpleCrystalResonanceExpBonus(
+    land: DynamicRecord | null | undefined,
+    mutantConfigIds: unknown[],
+): number {
+    if (toNum(land?.level) !== 5 || !Array.isArray(mutantConfigIds) || mutantConfigIds.length === 0) return 0;
+    return normalizeLandBuff(land).plantExpBonus;
 }
 
 export function getOrganicFertilizerTargetsFromLands(lands: DynamicRecord[]): number[] {

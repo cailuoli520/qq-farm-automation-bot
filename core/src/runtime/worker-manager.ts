@@ -37,6 +37,14 @@ interface ReloginState {
     lastReloginAt: number;
 }
 
+interface StartWorkerOptions {
+    preserveSelfHealRestartCounts?: boolean;
+    disconnectedSince?: number;
+}
+
+type SelfHealKind = 'connection' | 'watchdog';
+type SelfHealResult = 'restarted' | 'exhausted' | 'stopped';
+
 interface ThreadWorkerProcess extends WorkerProcess {
     postMessage: (message: unknown) => void;
     terminate: () => Promise<number>;
@@ -80,7 +88,7 @@ interface WorkerManagerOptions {
 }
 
 export interface WorkerManager {
-    startWorker: (account: AccountRecord, options?: { preserveWatchdogRestartCount?: boolean }) => boolean;
+    startWorker: (account: AccountRecord, options?: StartWorkerOptions) => boolean;
     stopWorker: (accountId: AccountId) => void;
     restartWorker: (account: AccountRecord) => boolean | void;
     callWorkerApi: (accountId: AccountId, method: string, ...args: unknown[]) => Promise<unknown>;
@@ -142,6 +150,10 @@ const LONG_MUTATION_METHODS = new Set([
     'deleteFriend',
     'fertilizeOwnLand',
 ]);
+
+const CONNECTION_STALL_RESTART_MS = 10 * 60 * 1000;
+const MAX_SELF_HEAL_RESTARTS = 3;
+const WATCHDOG_HEALTHY_RESET_MS = 10 * 60 * 1000;
 
 export function workerApiTimeout(method: string): number {
     // 写操作可能包含操作前校验、实际写入和操作后快照；主进程不能先于
@@ -319,15 +331,92 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
         return createForkWorker(account);
     }
 
-    // watchdog 卡死重启计数（连续 3 次停止自动重启；手动启动清零）
+    // 网络自愈与 watchdog 卡死分别计数，避免一类故障消耗另一类的重试额度。
+    const connectionRestartCounts = new Map<AccountId, number>();
     const watchdogRestartCounts = new Map<AccountId, number>();
+    const watchdogHealthySince = new Map<AccountId, number>();
+    const selfHealExhaustedLogged = new Set<string>();
 
-    function startWorker(account: AccountRecord, startOptions: { preserveWatchdogRestartCount?: boolean } = {}): boolean {
+    function selfHealLogKey(accountId: AccountId, kind: SelfHealKind): string {
+        return `${kind}:${accountId}`;
+    }
+
+    function clearSelfHealExhaustedLogs(accountId: AccountId): void {
+        selfHealExhaustedLogged.delete(selfHealLogKey(accountId, 'connection'));
+        selfHealExhaustedLogged.delete(selfHealLogKey(accountId, 'watchdog'));
+    }
+
+    function restartCountsFor(kind: SelfHealKind): Map<AccountId, number> {
+        return kind === 'watchdog' ? watchdogRestartCounts : connectionRestartCounts;
+    }
+
+    function rejectPendingWorkerRequests(accountId: AccountId, worker: WorkerRecord, message: string): void {
+        for (const [reqId, request] of worker.requests.entries()) {
+            managerScheduler.clear(`api_timeout_${accountId}_${reqId}`);
+            try {
+                request.reject(new Error(message));
+            } catch {}
+        }
+        worker.requests.clear();
+    }
+
+    function forceRestartForSelfHealing(
+        account: AccountRecord,
+        worker: WorkerRecord,
+        reason: string,
+        kind: SelfHealKind,
+    ): SelfHealResult {
+        const restartCounts = restartCountsFor(kind);
+        const previousCount = restartCounts.get(account.id) || 0;
+        if (previousCount >= MAX_SELF_HEAL_RESTARTS) {
+            const exhaustedLogKey = selfHealLogKey(account.id, kind);
+            if (!selfHealExhaustedLogged.has(exhaustedLogKey)) {
+                selfHealExhaustedLogged.add(exhaustedLogKey);
+                const action = kind === 'watchdog' ? '停止无响应的 Worker' : '保留当前 Worker 继续网络层重试';
+                log('系统', `账号 ${account.name} 自愈重启已达上限（${MAX_SELF_HEAL_RESTARTS} 次），${action}`, {
+                    accountId: String(account.id), accountName: account.name,
+                });
+            }
+            if (kind === 'connection') return 'exhausted';
+
+            addAccountLog('self_heal_stopped', `账号 ${account.name} 的 Worker 持续无响应，已停止自动重启`, account.id, account.name, { reason });
+            worker.stopping = true;
+            rejectPendingWorkerRequests(account.id, worker, 'Worker stopped after self-healing limit');
+            try { worker.process.kill(); } catch {}
+            if (workers[account.id]?.process === worker.process) delete workers[account.id];
+            managerScheduler.clear(`watchdog_${account.id}`);
+            managerScheduler.clear(`watchdog_restart_${account.id}`);
+            return 'stopped';
+        }
+
+        const restartCount = previousCount + 1;
+        const disconnectedSince = kind === 'connection' ? worker.disconnectedSince : 0;
+        restartCounts.set(account.id, restartCount);
+        watchdogHealthySince.delete(account.id);
+        log('系统', `账号 ${account.name} ${reason}，执行第 ${restartCount}/${MAX_SELF_HEAL_RESTARTS} 次自愈重启`, {
+            accountId: String(account.id), accountName: account.name,
+        });
+        addAccountLog('self_heal_restart', `账号 ${account.name} 执行自愈重启`, account.id, account.name, { reason });
+        worker.stopping = true;
+        rejectPendingWorkerRequests(account.id, worker, 'Worker restarting for self-healing');
+        try { worker.process.kill(); } catch {}
+        if (workers[account.id]?.process === worker.process) delete workers[account.id];
+        managerScheduler.clear(`watchdog_${account.id}`);
+        managerScheduler.setTimeoutTask(`watchdog_restart_${account.id}`, 3000, () => {
+            startWorker(account, { preserveSelfHealRestartCounts: true, disconnectedSince });
+        });
+        return 'restarted';
+    }
+
+    function startWorker(account: AccountRecord, startOptions: StartWorkerOptions = {}): boolean {
         if (!account || !account.id) return false;
         if (workers[account.id]) return false; // 已运行
-        if (!startOptions.preserveWatchdogRestartCount) {
-            watchdogRestartCounts.delete(account.id); // 手动/自动启动都重置计数
+        if (!startOptions.preserveSelfHealRestartCounts) {
+            connectionRestartCounts.delete(account.id);
+            watchdogRestartCounts.delete(account.id); // 手动/常规启动重置自愈计数
+            clearSelfHealExhaustedLogs(account.id);
         }
+        watchdogHealthySince.delete(account.id);
 
         log('系统', `正在启动账号: ${account.name}`, { accountId: String(account.id), accountName: account.name });
 
@@ -350,7 +439,8 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
             name: account.name,
             username: account.username || '', // 保存用户名用于下线提醒
             stopping: false,
-            disconnectedSince: 0,
+            disconnectedSince: Math.max(0, Number(startOptions.disconnectedSince) || 0),
+            connectionStallSince: 0,
             autoDeleteTriggered: false,
             wsError: reauthRequiredStates.get(String(account.id)) || null,
         };
@@ -390,21 +480,22 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
             if (!current || current.stopping || current.process !== child) return;
             const idleMs = now() - lastPongAt;
             if (idleMs >= 90000) {
-                const cnt = (watchdogRestartCounts.get(account.id) || 0) + 1;
-                watchdogRestartCounts.set(account.id, cnt);
-                log('系统', `账号 ${account.name} worker 无响应 ${Math.round(idleMs / 1000)}s，判定卡死（第 ${cnt} 次），强制重启`, { accountId: String(account.id), accountName: account.name });
-                current.stopping = true; // 避免 exit 处理误判自动重登失败
-                try { child.kill(); } catch {}
-                delete workers[account.id];
-                managerScheduler.setTimeoutTask(`watchdog_restart_${account.id}`, 3000, () => {
-                    if ((watchdogRestartCounts.get(account.id) || 0) > 3) {
-                        log('系统', `账号 ${account.name} 卡死重启超过 3 次，停止自动重启（请检查网络/凭证或手动启动）`, { accountId: String(account.id), accountName: account.name });
-                        watchdogRestartCounts.delete(account.id);
-                        return;
-                    }
-                    startWorker(account, { preserveWatchdogRestartCount: true });
-                });
+                forceRestartForSelfHealing(
+                    account,
+                    current,
+                    `Worker 已 ${Math.round(idleMs / 1000)} 秒未响应`,
+                    'watchdog',
+                );
             } else {
+                const healthySince = watchdogHealthySince.get(account.id);
+                if (
+                    healthySince !== undefined
+                    && now() - healthySince >= WATCHDOG_HEALTHY_RESET_MS
+                    && watchdogRestartCounts.has(account.id)
+                ) {
+                    watchdogRestartCounts.delete(account.id);
+                    selfHealExhaustedLogged.delete(selfHealLogKey(account.id, 'watchdog'));
+                }
                 try { child.send({ type: 'ping' }); } catch {}
             }
         });
@@ -451,14 +542,8 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
                 }
             }
 
-            if (current && current.requests && current.requests.size > 0) {
-                for (const [reqId, req] of current.requests.entries()) {
-                    managerScheduler.clear(`api_timeout_${account.id}_${reqId}`);
-                    try {
-                        req.reject(new Error('Worker exited'));
-                    } catch {}
-                }
-                current.requests.clear();
+            if (current && current.process === child && current.requests.size > 0) {
+                rejectPendingWorkerRequests(account.id, current, 'Worker exited');
             }
 
             if (current && current.process === child) {
@@ -535,9 +620,15 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
             const connected = !!(msg.data && msg.data.connection && msg.data.connection.connected);
             if (connected) {
                 worker.disconnectedSince = 0;
+                worker.connectionStallSince = 0;
                 worker.autoDeleteTriggered = false;
                 worker.wsError = null;
+                connectionRestartCounts.delete(accountId);
+                selfHealExhaustedLogged.delete(selfHealLogKey(accountId, 'connection'));
+                if (!watchdogHealthySince.has(accountId)) watchdogHealthySince.set(accountId, now());
                 reauthRequiredStates.delete(String(accountId));
+            } else {
+                watchdogHealthySince.delete(accountId);
             }
             worker.status = {
                 ...worker.status,
@@ -569,9 +660,12 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
             }
 
             if (!connected && !worker.stopping) {
-                const now = Date.now();
-                if (!worker.disconnectedSince) worker.disconnectedSince = now;
-                const offlineMs = now - worker.disconnectedSince;
+                const currentTime = now();
+                if (!worker.disconnectedSince) worker.disconnectedSince = currentTime;
+                if (!worker.connectionStallSince) worker.connectionStallSince = currentTime;
+                const offlineMs = currentTime - worker.disconnectedSince;
+                const connectionStallMs = currentTime - worker.connectionStallSince;
+                const phase = String(msg.data?.connection?.phase || 'disconnected');
                 const autoDeleteMs = getOfflineAutoDeleteMs(worker.username);
                 if (!worker.autoDeleteTriggered && offlineMs >= autoDeleteMs) {
                     worker.autoDeleteTriggered = true;
@@ -596,6 +690,21 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
                         deleteAccount(accountId);
                     } catch (e) {
                         log('错误', `删除离线账号失败: ${errorMessage(e)}`);
+                    }
+                    return;
+                }
+                if (connectionStallMs >= CONNECTION_STALL_RESTART_MS && phase !== 'reauth-required') {
+                    const accounts = typeof getAccounts === 'function' ? getAccounts() : { accounts: [] };
+                    const account = (accounts.accounts || []).find((item: AccountRecord) => String(item.id) === String(accountId));
+                    if (account) {
+                        const result = forceRestartForSelfHealing(
+                            account,
+                            worker,
+                            `连接连续 ${Math.floor(connectionStallMs / 60000)} 分钟未恢复（phase=${phase}）`,
+                            'connection',
+                        );
+                        if (result === 'restarted' || result === 'stopped') return;
+                        worker.connectionStallSince = currentTime;
                     }
                 }
             }
@@ -721,7 +830,13 @@ function createWorkerManager(options: WorkerManagerOptions): WorkerManager {
             managerScheduler.clear(`api_timeout_${accountId}_${id}`);
             const req = worker.requests.get(id);
             if (req) {
-                if (error) req.reject(new Error(error));
+                if (error) {
+                    const payload = typeof error === 'string' ? { message: error } : error;
+                    const apiError = new Error(payload.message) as Error & { code?: string; retryAfterMs?: number };
+                    if (payload.code) apiError.code = payload.code;
+                    if (payload.retryAfterMs) apiError.retryAfterMs = payload.retryAfterMs;
+                    req.reject(apiError);
+                }
                 else req.resolve(result);
                 worker.requests.delete(id);
             }

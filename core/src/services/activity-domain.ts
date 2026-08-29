@@ -1,5 +1,6 @@
 import { createActivitySnapshotCoordinator } from './activity-snapshot';
 import { createTimeoutBudget, settleSequentially } from '../utils/request-coordination';
+import type { RainWeatherQueryOptions } from './rain-poetry';
 const fs = require('node:fs');
 const { getResourcePath } = require('../config/runtime-paths');
 const import_constellation_2026072701 = {
@@ -1059,8 +1060,11 @@ async function getQixiDewTargets(hostGid: unknown): Promise<DynamicRecord> {
 async function useQixiDew(hostGid: unknown, landId: unknown): Promise<DynamicRecord> {
   return serializeMutation(async () => withFreshQixiMutationSnapshot(await qixi.useDew(hostGid, landId)));
 }
-async function getRainPoetryWeather(friendGid: unknown): Promise<DynamicRecord> {
-  return rainPoetry.getRainPoetryWeather(friendGid);
+async function getRainPoetryWeather(
+  friendGid: unknown,
+  options: RainWeatherQueryOptions = {},
+): Promise<DynamicRecord | null> {
+  return rainPoetry.getRainPoetryWeather(friendGid, options);
 }
 async function exchangeRainBottle(goodsId: unknown, count: unknown): Promise<DynamicRecord> {
   return serializeMutation(async () => withFreshRainPoetryMutationSnapshot(await rainPoetry.exchangeRainBottle(goodsId, count)));

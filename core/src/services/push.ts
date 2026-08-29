@@ -2,6 +2,8 @@
  * 推送接口封装（基于 pushoo）
  */
 
+import { withTimeout } from '../utils/request-coordination';
+
 interface PushPayload {
     channel?: unknown;
     endpoint?: unknown;
@@ -29,6 +31,11 @@ const pushoo = require('pushoo').default as (
     request: PushRequest,
 ) => Promise<unknown>;
 
+interface PushDependencies {
+    send?: typeof pushoo;
+    timeoutMs?: number;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
@@ -53,7 +60,10 @@ function assertRequiredText(name: string, value: unknown): string {
  * @param {string} payload.content 必填 推送内容
  * @returns {Promise<{ok: boolean, code: string, msg: string, raw: any}>} 推送结果
  */
-async function sendPushooMessage(payload: PushPayload = {}): Promise<PushResult> {
+async function sendPushooMessage(
+    payload: PushPayload = {},
+    dependencies: PushDependencies = {},
+): Promise<PushResult> {
     const channel = assertRequiredText('channel', payload.channel);
     const endpoint = String(payload.endpoint || '').trim();
     const rawToken = String(payload.token || '').trim();
@@ -69,7 +79,13 @@ async function sendPushooMessage(payload: PushPayload = {}): Promise<PushResult>
         };
     }
 
-    const result = await pushoo(channel, request);
+    const sender = dependencies.send || pushoo;
+    const timeoutMs = Math.max(1, Number(dependencies.timeoutMs) || 15_000);
+    const result = await withTimeout(
+        Promise.resolve(sender(channel, request)),
+        timeoutMs,
+        `推送请求超时 (${channel})`,
+    );
 
     const raw = result && typeof result === 'object' && !Array.isArray(result)
         ? result as Record<string, unknown>

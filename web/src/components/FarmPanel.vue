@@ -16,7 +16,7 @@ const accountStore = useAccountStore()
 const statusStore = useStatusStore()
 const settingStore = useSettingStore()
 const toast = useToastStore()
-const { lands, summary, career, loading } = storeToRefs(farmStore)
+const { lands, summary, career, socialEvents, loading } = storeToRefs(farmStore)
 const { currentAccountId, currentAccount } = storeToRefs(accountStore)
 const { status, loading: statusLoading, realtimeConnected } = storeToRefs(statusStore)
 farmStore.activateAccount(currentAccountId.value)
@@ -194,6 +194,14 @@ onUnmounted(() => {
         <div class="flex items-center gap-1.5 rounded-full bg-red-100 px-3 py-1 text-red-700 dark:bg-red-900/30 dark:text-red-400">
           <div class="i-carbon-warning" />
           <span class="font-medium">枯萎: {{ summary?.dead || 0 }}</span>
+        </div>
+        <div
+          v-for="event in socialEvents"
+          :key="`${event.itemId}-${event.visitorGid}-${event.occurredAt}`"
+          class="flex items-center gap-1.5 rounded-full bg-indigo-100 px-3 py-1 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
+        >
+          <div class="i-carbon-warning-alt" />
+          <span class="font-medium">{{ event.itemName }}</span>
         </div>
       </div>
 

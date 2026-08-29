@@ -1,4 +1,4 @@
-import type { MasterToWorkerMessage, WorkerToMasterMessage } from '../types/ipc';
+import type { MasterToWorkerMessage, WorkerApiErrorPayload, WorkerToMasterMessage } from '../types/ipc';
 
 const { getAutomation } = require('../models/store');
 const { getAvailableSeeds, getLandsDetail, runFarmOperation } = require('../services/farm');
@@ -24,6 +24,16 @@ interface WorkerApiMethodOptions {
 
 function errorMessage(error: unknown): string {
     return error instanceof Error && error.message ? error.message : String(error || 'unknown');
+}
+
+function serializeApiError(error: unknown): WorkerApiErrorPayload {
+    const candidate = error as { code?: unknown; retryAfterMs?: unknown };
+    const retryAfterMs = Number(candidate?.retryAfterMs);
+    return {
+        message: errorMessage(error),
+        ...(candidate?.code !== undefined ? { code: String(candidate.code) } : {}),
+        ...(Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? { retryAfterMs } : {}),
+    };
 }
 
 export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<string, WorkerApiMethod> {
@@ -86,7 +96,7 @@ export function createWorkerApiMethods(options: WorkerApiMethodOptions): Record<
         getCurrentQingMeiActivity: () => require('../services/activity').getCurrentQingMeiActivity(),
         getCurrentQixiActivity: () => require('../services/activity').getCurrentQixiActivity(),
         getCurrentRainPoetryActivity: () => require('../services/activity').getCurrentRainPoetryActivity(),
-        getRainPoetryWeather: args => require('../services/activity').getRainPoetryWeather(args[0]),
+        getRainPoetryWeather: args => require('../services/activity').getRainPoetryWeather(args[0], args[1]),
         claimBattlePassRewards: () => require('../services/activity').claimBattlePassRewards(),
         exchangeStarSandGoods: args => require('../services/activity').exchangeStarSandGoods(args[0], args[1]),
         lightConstellation: () => require('../services/activity').lightConstellation(),
@@ -113,17 +123,17 @@ export function createWorkerApiHandler(
     return async function handleApiCall(message: ApiCallMessage): Promise<void> {
         const { id, method, args } = message;
         let result: unknown = null;
-        let error: string | undefined;
+        let error: WorkerApiErrorPayload | undefined;
 
         try {
             const apiMethod = Object.hasOwn(methods, method) ? methods[method] : undefined;
             if (typeof apiMethod !== 'function') {
-                error = 'Unknown method';
+                error = { message: 'Unknown method', code: 'UNKNOWN_WORKER_API_METHOD' };
             } else {
                 result = await apiMethod(args);
             }
         } catch (caught) {
-            error = errorMessage(caught);
+            error = serializeApiError(caught);
         }
 
         sendToMaster({ type: 'api_response', id, result, error });

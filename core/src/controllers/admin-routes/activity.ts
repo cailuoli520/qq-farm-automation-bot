@@ -47,14 +47,21 @@ const ACTIVITY_ERROR_MESSAGES: Record<string, string> = {
     RAIN_EXCHANGE_UNAVAILABLE: '该天气瓶当前不可兑换',
     RAIN_RESEARCH_UNAVAILABLE: '该研究节点尚不可解锁或雷电徽章不足',
     RAIN_RESPONSE_INVALID: '雨落成诗活动状态已经变化，请刷新后重试',
+    FRIEND_TASK_BUSY: '好友巡查正在运行，请稍后再检查天气',
+    CONNECTION_NOT_READY: '游戏连接尚未就绪，请稍后重试',
 };
 
-function activityErrorResponse(error: unknown): { code: string; message: string } {
-    const candidate = error as { code?: unknown; message?: unknown };
+function activityErrorResponse(error: unknown): { code: string; message: string; retryAfterMs?: number } {
+    const candidate = error as { code?: unknown; message?: unknown; retryAfterMs?: unknown };
     const rawMessage = String(candidate?.message || error || '活动操作失败');
     const protocolCode = String(candidate?.code || (rawMessage.match(/\bcode=(\d+)\b/) || [])[1] || '');
     const friendlyMessage = ACTIVITY_ERROR_MESSAGES[protocolCode];
-    if (friendlyMessage) return { code: protocolCode, message: friendlyMessage };
+    const retryAfterMs = Number(candidate?.retryAfterMs);
+    if (friendlyMessage) return {
+        code: protocolCode,
+        message: friendlyMessage,
+        ...(Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? { retryAfterMs } : {}),
+    };
     if (rawMessage.includes('当前没有可领取的游记奖励')) return { code: 'NO_PASS_REWARD', message: '当前没有可领取的游记奖励，请完成新的游记等级后再试' };
     if (rawMessage.includes('指定节令当前不可领取')) return { code: 'SOLAR_TERM_UNAVAILABLE', message: '当前节令奖励暂不可领取，请在开放后再试' };
     if (rawMessage.includes('服务端未发现星座活动')) return { code: 'CONSTELLATION_UNAVAILABLE', message: '观星礼录活动暂未开放或已经结束' };
@@ -84,7 +91,8 @@ export function registerActivityRoutes(context: ActivityRoutesContext): void {
             return undefined;
         } catch (error) {
             const result = activityErrorResponse(error);
-            return response.json({ ok: false, error: result.message, errorCode: result.code });
+            if (result.retryAfterMs) response.setHeader('Retry-After', String(Math.ceil(result.retryAfterMs / 1000)));
+            return response.json({ ok: false, error: result.message, errorCode: result.code, retryAfterMs: result.retryAfterMs });
         }
     };
     const mountGet = (routePath: string, providerMethod: string): void => {
@@ -98,7 +106,10 @@ export function registerActivityRoutes(context: ActivityRoutesContext): void {
     mountGet('/api/activity-center/qingmei', 'getCurrentQingMeiActivity');
     mountGet('/api/activity-center/qixi', 'getCurrentQixiActivity');
     mountGet('/api/activity-center/rain-poetry', 'getCurrentRainPoetryActivity');
-    app.get('/api/activity-center/rain-poetry/weather', withActivityAccount((accountId, request) => provider.getRainPoetryWeather(accountId, request.query?.friendGid)));
+    app.get('/api/activity-center/rain-poetry/weather', withActivityAccount((accountId, request) => provider.getRainPoetryWeather(accountId, request.query?.friendGid, {
+        cacheOnly: request.query?.cacheOnly === 'true',
+        forceRefresh: request.query?.forceRefresh === 'true',
+    })));
     app.get('/api/activity-center/qixi/dew/targets', withActivityAccount((accountId, request) => provider.getQixiDewTargets(accountId, request.query?.hostGid)));
     app.post('/api/activity-center/pass/claim', withActivityAccount(accountId => provider.claimBattlePassRewards(accountId)));
     app.post('/api/activity-center/constellation/light', withActivityAccount(accountId => provider.lightConstellation(accountId)));

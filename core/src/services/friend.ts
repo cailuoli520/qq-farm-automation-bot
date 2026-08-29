@@ -3,6 +3,7 @@
  */
 
 import type { FriendVisitContext, FriendVisitSource } from './friend-visit';
+import type { FriendHelpVisitResult } from './friend-help-outcome';
 
 const { CONFIG, PlantPhase } = require('../config/config');
 const {
@@ -31,6 +32,7 @@ const { recordOperation } = require('./stats');
 const { sellAllFruits } = require('./warehouse');
 const { BAD_SHARED_LIMIT_ID, friendOperationLimits, getBeijingDateKey } = require('./friend-operation-limits');
 const { analyzeFriendLands, buildFriendLandsDetail } = require('./friend-land-domain');
+const { buildFriendHelpOutcomeLog } = require('./friend-help-outcome');
 const { tryAcquireFriendTask } = require('./friend-task-coordinator');
 const { FriendVisitEnterError, enterFriendFarm, leaveFriendFarm, withFriendVisit } = require('./friend-visit');
 const {
@@ -747,14 +749,14 @@ async function visitFriendForHelp(
     myGid: unknown,
     accountId: unknown,
     ignoreExpLimit = false,
-) {
+): Promise<FriendHelpVisitResult> {
     const { gid, name } = friend;
 
     const stopWhenExpLimit = !!isAutomationOn('friend_help_exp_limit') && !ignoreExpLimit;
     if (!stopWhenExpLimit) resetHelpExpAvailability();
     const protectDogBypassEnabled = !!isAutomationOn('friend_help_protect_dog_ignore_exp_limit');
     if (stopWhenExpLimit && !canGetHelpExperience() && !protectDogBypassEnabled) {
-        return { acted: false, entered: false };
+        return { status: 'skipped_exp_limit', acted: false, entered: false };
     }
     try {
         return await withFriendVisit({
@@ -763,13 +765,16 @@ async function visitFriendForHelp(
             onObserverError: logFriendVisitObserverError,
         }, async ({ enterReply }: FriendVisitContext) => {
             const lands = enterReply.lands || [];
-            if (lands.length === 0) return;
+            if (lands.length === 0) return { status: 'no_action', acted: false, entered: true };
 
             const status = analyzeFriendLands(lands, myGid, name, {});
-            const protectDogBypass = protectDogBypassEnabled && canBypassHelpExpLimitForProtectDog(enterReply);
+            const protectDogBypass = stopWhenExpLimit
+                && !canGetHelpExperience()
+                && protectDogBypassEnabled
+                && canBypassHelpExpLimitForProtectDog(enterReply);
             const effectiveStopWhenExpLimit = stopWhenExpLimit && !protectDogBypass;
             if (effectiveStopWhenExpLimit && !canGetHelpExperience()) {
-                return { acted: false, entered: true };
+                return { status: 'skipped_exp_limit', acted: false, entered: true };
             }
             const actions: string[] = [];
             const helpOps = [
@@ -801,19 +806,24 @@ async function visitFriendForHelp(
                     module: 'friend', event: '帮助好友', result: 'ok', friendName: name, friendGid: gid, actions
                 });
             }
-            return { acted: actions.length > 0, entered: true };
+            if (actions.length === 0) return { status: 'no_action', acted: false, entered: true };
+            return {
+                status: protectDogBypass ? 'protect_dog_bypass' : 'helped',
+                acted: true,
+                entered: true,
+            };
         });
     } catch (e) {
         if (!(e instanceof FriendVisitEnterError)) throw e;
         const enterError = (e as { cause?: unknown }).cause ?? e;
         const handled = handleFriendEnterError(gid, name, enterError);
         if (handled.handled) {
-            return { acted: false, entered: false };
+            return { status: 'enter_failed', acted: false, entered: false };
         }
         logWarn('好友', `进入 ${name} 农场失败: ${errorMessage(enterError)}`, {
             module: 'friend', event: '进入农场', result: 'error', friendName: name, friendGid: gid
         });
-        return { acted: false, entered: false };
+        return { status: 'enter_failed', acted: false, entered: false };
     }
 }
 
@@ -947,9 +957,12 @@ async function checkFriends(options: {
                 }
 
                 try {
-                    // await visitFriendForHelp(friend, totalActions, state.gid, state.accountId);
-                    await visitFriendForHelp(friend, totalActions, state.gid, state.accountId, ignoreExpLimit);
-                    log('好友', `批量帮助第 ${i + 1} 个好友完成: ${friend.name}`, { module: 'friend', event: '批量帮助完成', index: i + 1, friendName: friend.name });
+                    const outcome = await visitFriendForHelp(friend, totalActions, state.gid, state.accountId, ignoreExpLimit);
+                    const outcomeLog = buildFriendHelpOutcomeLog(outcome, i + 1, helpFriends.length, friend.name);
+                    log('好友', outcomeLog.message, {
+                        module: 'friend', event: outcomeLog.event, result: outcomeLog.result,
+                        reason: outcomeLog.reason, index: i + 1, total: helpFriends.length, friendName: friend.name,
+                    });
                 } catch (e) {
                     const message = errorMessage(e);
                     log('好友', `批量帮助第 ${i + 1} 个好友失败: ${friend.name}, 错误: ${message}`, { module: 'friend', event: '批量帮助失败', index: i + 1, friendName: friend.name, error: message });

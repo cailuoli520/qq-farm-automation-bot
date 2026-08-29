@@ -28,6 +28,47 @@ test('自家 Farming 请求显式保留两个为零的场景字段', () => {
     assert.deepEqual(encoded.subarray(-4), Buffer.from([0x18, 0x00, 0x20, 0x00]));
 });
 
+test('青蛙农场事件按抓包字段往返编码并解析清理奖励', () => {
+    const requestFixture = Buffer.from('0a0109109082b7e103180020002a028d27', 'hex');
+    const request = types.FarmingRequest.decode(requestFixture);
+    assert.deepEqual(request.land_ids.map((id: any) => id.toString()), ['9']);
+    assert.deepEqual(request.social_event_item_ids.map((id: any) => id.toString()), ['5005']);
+    assert.deepEqual(Buffer.from(types.FarmingRequest.encode(request).finish()), requestFixture);
+
+    const landsFixture = Buffer.from('1a0f088d27109fd487ea0318cd86bcd406', 'hex');
+    const landsReply = types.AllLandsReply.decode(landsFixture);
+    assert.equal(landsReply.social_events[0].item_id.toString(), '5005');
+    assert.equal(landsReply.social_events[0].visitor_gid.toString(), '1027729951');
+    assert.deepEqual(Buffer.from(types.AllLandsReply.encode(landsReply).finish()), landsFixture);
+
+    const farmingReplyFixture = Buffer.from('220a088d27120508cd08101e', 'hex');
+    const farmingReply = types.FarmingReply.decode(farmingReplyFixture);
+    assert.equal(farmingReply.social_event_rewards[0].item_id.toString(), '5005');
+    assert.equal(farmingReply.social_event_rewards[0].reward.id.toString(), '1101');
+    assert.equal(farmingReply.social_event_rewards[0].reward.count.toString(), '30');
+    assert.deepEqual(Buffer.from(types.FarmingReply.encode(farmingReply).finish()), farmingReplyFixture);
+
+    const clearedNotifyFixture = Buffer.from('109082b7e103', 'hex');
+    const clearedNotify = types.FarmSocialEventsNotify.decode(clearedNotifyFixture);
+    assert.equal(clearedNotify.host_gid.toString(), '1009631504');
+    assert.deepEqual(clearedNotify.social_events, []);
+    assert.deepEqual(Buffer.from(types.FarmSocialEventsNotify.encode(clearedNotify).finish()), clearedNotifyFixture);
+});
+
+test('乌云通知使用实时地块互动记录', () => {
+    const fixture = Buffer.from(
+        '0a1808015214b20211088e27109fd487ea0318978cbcd4062001109082b7e103',
+        'hex',
+    );
+    const notify = types.LandsNotify.decode(fixture);
+    const target = notify.lands[0].plant.interaction_targets[0];
+
+    assert.equal(target.item_id.toString(), '5006');
+    assert.equal(target.host_gid.toString(), '1027729951');
+    assert.equal(target.land_id.toString(), '1');
+    assert.deepEqual(Buffer.from(types.LandsNotify.encode(notify).finish()), fixture);
+});
+
 test('Farming 回复保留同一土地的多次帮忙操作结果', () => {
     // 截取自同一抓包 FarmingReply 的 field 3；每项仅包含已确认的 land_id。
     const fixture = Buffer.from('1a02080a1a0208161a0208051a02080d', 'hex');

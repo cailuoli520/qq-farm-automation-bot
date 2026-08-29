@@ -4,6 +4,7 @@ const { isSoftRuntimeError } = require('../src/utils/runtime-errors');
 
 test('账号启动和重连期间的网关状态不映射为服务器错误', () => {
     assert.equal(isSoftRuntimeError(new Error('连接未打开: Bag')), true);
+    assert.equal(isSoftRuntimeError(new Error('连接未就绪: Bag (phase=authenticating)')), true);
     assert.equal(isSoftRuntimeError(new Error('账号尚未登录')), true);
     assert.equal(isSoftRuntimeError(new Error('请求已中断: 主动重连')), true);
 });

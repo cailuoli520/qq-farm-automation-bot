@@ -21,6 +21,18 @@ import { log, logWarn, syncServerTime, toLong, toNum } from './utils';
 type DataRecord = Record<string, unknown>;
 type RawData = Buffer | ArrayBuffer | Buffer[];
 type GatewayCallback = (error: Error | null, body?: Uint8Array, meta?: DataRecord) => void;
+type LoginSuccessCallback = () => void | Promise<void>;
+
+export type ConnectionPhase = 'disconnected' | 'connecting' | 'authenticating' | 'ready' | 'backoff' | 'reauth-required';
+
+export interface ConnectionStateSnapshot {
+    phase: ConnectionPhase;
+    ready: boolean;
+    revision: number;
+    reconnectAttempt: number;
+    changedAt: number;
+    reason: string;
+}
 
 interface WebSocketLike extends EventEmitter {
     readyState: number;
@@ -30,7 +42,7 @@ interface WebSocketLike extends EventEmitter {
 }
 
 interface WebSocketConstructor {
-    new(url: string, options?: { headers?: Record<string, string> }): WebSocketLike;
+    new(url: string, options?: { headers?: Record<string, string>; handshakeTimeout?: number }): WebSocketLike;
     OPEN: number;
 }
 
@@ -115,10 +127,69 @@ let wsErrorState: WsErrorState = { code: 0, at: 0, message: '' };
 const networkScheduler = createScheduler('network');
 const MAX_PENDING_REQUESTS = 5;
 const MAX_BUSINESS_REQUESTS = 4;
+function configuredTimeout(name: string, fallback: number): number {
+    const value = Number(process.env[name]);
+    return Number.isFinite(value) && value > 0 ? Math.max(1, Math.floor(value)) : fallback;
+}
+
+const WS_HANDSHAKE_TIMEOUT_MS = configuredTimeout('FARM_WS_HANDSHAKE_TIMEOUT_MS', 10_000);
+const LOGIN_TIMEOUT_MS = configuredTimeout('FARM_LOGIN_TIMEOUT_MS', 20_000);
+const RECONNECT_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 30_000, 60_000] as const;
 let connectionRevision = 0;
+let reconnectAttempt = 0;
 let lastInboundAt = Date.now();
 let lastPressureLogAt = 0;
 const gatewayTokens = new GatewayTokenProvider();
+let connectionState: ConnectionStateSnapshot = {
+    phase: 'disconnected',
+    ready: false,
+    revision: connectionRevision,
+    reconnectAttempt,
+    changedAt: Date.now(),
+    reason: '尚未连接',
+};
+
+export function computeReconnectDelayMs(attempt: number, random: () => number = Math.random): number {
+    const index = Math.min(RECONNECT_DELAYS_MS.length - 1, Math.max(0, Math.floor(attempt) - 1));
+    const base = RECONNECT_DELAYS_MS[index];
+    const jitter = 0.8 + Math.max(0, Math.min(1, random())) * 0.4;
+    return Math.min(RECONNECT_DELAYS_MS.at(-1)!, Math.max(1_000, Math.round(base * jitter)));
+}
+
+function setConnectionPhase(phase: ConnectionPhase, reason = ''): void {
+    const previous = connectionState;
+    connectionState = {
+        phase,
+        ready: phase === 'ready',
+        revision: connectionRevision,
+        reconnectAttempt,
+        changedAt: Date.now(),
+        reason: String(reason || ''),
+    };
+    networkEvents.emit('connectionStateChanged', { ...connectionState });
+    if (previous.ready && !connectionState.ready) {
+        networkEvents.emit('disconnected', { ...connectionState });
+    }
+    if (previous.phase !== phase || previous.revision !== connectionState.revision) {
+        log('系统', `连接状态 ${previous.phase} → ${phase}${reason ? ` (${reason})` : ''}`, {
+            module: 'network',
+            event: 'connection_state',
+            phase,
+            previousPhase: previous.phase,
+            revision: connectionRevision,
+            reconnectAttempt,
+            accountId: String(process.env.FARM_ACCOUNT_ID || ''),
+        });
+    }
+}
+
+function resetConnectionProtocolState(): void {
+    clientSeq = 1;
+    serverSeq = 0;
+    lastInboundAt = Date.now();
+    lastPressureLogAt = 0;
+    gatewayTokens.clear();
+}
 
 function describePendingRequests(limit = MAX_PENDING_REQUESTS): string {
     if (pendingCallbacks.size === 0) return 'none';
@@ -139,7 +210,7 @@ function requestPressureDetails(): string {
 
 function logRequestPressure(methodName: string): void {
     const now = Date.now();
-    if (now - lastPressureLogAt < 1000) return;
+    if (now - lastPressureLogAt < 5000) return;
     lastPressureLogAt = now;
     logWarn('系统', `Gateway 请求压力: rejected=${methodName}, ${requestPressureDetails()}`);
 }
@@ -206,57 +277,6 @@ async function encodeMsg(
     );
 }
 
-async function sendMsg(
-    serviceName: string,
-    methodName: string,
-    bodyBytes: Uint8Array | null | undefined,
-    callback?: GatewayCallback,
-): Promise<boolean> {
-    const socket = ws;
-    const revision = connectionRevision;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-        log('系统', '[WS] 连接未打开');
-        return false;
-    }
-    const seq = clientSeq;
-    clientSeq += 1;
-    let completed = false;
-    const finish: GatewayCallback = (error, body, meta) => {
-        if (completed) return;
-        completed = true;
-        pendingCallbacks.delete(seq);
-        if (callback) callback(error, body, meta);
-    };
-    if (callback) {
-        pendingCallbacks.set(seq, {
-            callback: finish,
-            serviceName,
-            methodName,
-            category: 'control',
-            startedAt: Date.now(),
-            sentAt: 0,
-            revision,
-        });
-    }
-    try {
-        const encoded = await encodeMsg(serviceName, methodName, bodyBytes, seq);
-        if (revision !== connectionRevision || socket !== ws || socket.readyState !== WebSocket.OPEN) {
-            throw new Error(`请求已中断: ${methodName}`);
-        }
-        const entry = pendingCallbacks.get(seq);
-        if (entry) entry.sentAt = Date.now();
-        await new Promise<void>((resolve, reject) => {
-            socket.send(encoded, (error?: Error) => error ? reject(error) : resolve());
-        });
-    } catch (err) {
-        if (callback) {
-            finish(err instanceof Error ? err : new Error(errorMessage(err)));
-        }
-        return false;
-    }
-    return true;
-}
-
 /** 网关错误（含服务端错误码） */
 class GatewayError extends Error {
     readonly code: number;
@@ -292,6 +312,15 @@ class RequestTimeoutError extends Error {
     }
 }
 
+class ConnectionNotReadyError extends Error {
+    readonly code = 'CONNECTION_NOT_READY';
+
+    constructor(methodName: string, phase: ConnectionPhase) {
+        super(`连接未就绪: ${methodName} (phase=${phase})`);
+        this.name = 'ConnectionNotReadyError';
+    }
+}
+
 /** Promise 版发送（timeoutOrOptions 支持数字超时或 { timeoutMs, expectedErrorCodes } 选项对象） */
 function sendMsgAsync(
     serviceName: string,
@@ -308,6 +337,11 @@ function sendMsgAsync(
         // 检查连接状态
         if (!ws || ws.readyState !== WebSocket.OPEN) {
             reject(new Error(`连接未打开: ${methodName}`));
+            return;
+        }
+
+        if (category === 'business' && !connectionState.ready) {
+            reject(new ConnectionNotReadyError(methodName, connectionState.phase));
             return;
         }
 
@@ -451,6 +485,18 @@ function handleNotify(msg: DataRecord): void {
                     type,
                     reason: String(notify.reason_message || '未知'),
                 });
+            } catch { }
+            return;
+        }
+
+        // 青蛙等农场级社交事件变化。与乌云不同，它不附着在 LandInfo 上。
+        if (type.includes('FarmSocialEventsNotify')) {
+            try {
+                const notify = decodeMessage('FarmSocialEventsNotify', eventBody);
+                const hostGid = toNum(notify.host_gid);
+                if (hostGid === userState.gid || hostGid === 0) {
+                    networkEvents.emit('farmSocialEventsChanged', notify.social_events || []);
+                }
             } catch { }
             return;
         }
@@ -670,7 +716,11 @@ function handleNotify(msg: DataRecord): void {
 }
 
 // ============ 登录 ============
-async function sendLogin(onLoginSuccess: (() => void) | null = null): Promise<void> {
+async function sendLogin(
+    revision: number,
+    socket: WebSocketLike,
+    onLoginSuccess: LoginSuccessCallback | null = null,
+): Promise<void> {
     const body = encodeMessage('LoginRequest', {
         sharer_id: toLong(0),
         sharer_open_id: '',
@@ -689,77 +739,91 @@ async function sendLogin(onLoginSuccess: (() => void) | null = null): Promise<vo
         },
     });
 
-    await sendMsg('gamepb.userpb.UserService', 'Login', body, async (err, bodyBytes, _meta) => {
-        if (err) {
-            log('登录', `失败: ${err.message}`);
-            // 如果是验证失败，直接退出进程
-            if (err.message.includes('code=')) {
-                log('系统', '账号验证失败，即将停止运行...');
-                networkScheduler.setTimeoutTask('login_error_exit', 1000, () => process.exit(0));
+    try {
+        const { body: replyBody } = await sendMsgAsync(
+            'gamepb.userpb.UserService',
+            'Login',
+            body,
+            { timeoutMs: LOGIN_TIMEOUT_MS, category: 'control' },
+        );
+        if (revision !== connectionRevision || socket !== ws) return;
+
+        const reply = decodeMessage('LoginReply', toBuffer(replyBody));
+        const basic = asRecord(reply.basic);
+        const gid = toNum(basic.gid);
+        if (gid <= 0) throw new Error('登录回包缺少有效账号信息');
+
+        applyServerVersionInfo(reply.version_info);
+        clearWsErrorState();
+        userState.gid = gid;
+        userState.name = String(basic.name || '未知');
+        userState.level = toNum(basic.level);
+        userState.gold = toNum(basic.gold);
+        userState.exp = toNum(basic.exp);
+
+        updateStatusFromLogin({
+            name: userState.name,
+            level: userState.level,
+            gold: userState.gold,
+            exp: userState.exp,
+        });
+
+        log('系统', `登录成功: ${userState.name} (Lv${userState.level})`);
+
+        console.warn('');
+        console.warn('========== 登录成功 ==========');
+        console.warn(`  GID:    ${userState.gid}`);
+        console.warn(`  昵称:   ${userState.name}`);
+        console.warn(`  等级:   ${userState.level}`);
+        console.warn(`  金币:   ${userState.gold}`);
+        if (reply.time_now_millis) {
+            syncServerTime(toNum(reply.time_now_millis));
+            console.warn(`  时间:   ${new Date(toNum(reply.time_now_millis)).toLocaleString()}`);
+        }
+        console.warn('===============================');
+        console.warn('');
+
+        userState.openid = String(basic.open_id || '').trim();
+        let aceReady = true;
+        if (userState.openid) {
+            try {
+                await cryptoWasm.bindUser(userState.openid);
+                const initTokenLength = gatewayTokens.stageInitToken(cryptoWasm.getEncryptedInitInfo());
+                if (initTokenLength > 0) {
+                    log('ACE', `TSDK 初始化凭据已就绪: ${initTokenLength} 字符，将随下一条请求发送`);
+                }
+            } catch (aceError) {
+                aceReady = false;
+                gatewayTokens.clear();
+                logWarn('ACE', `TSDK 用户绑定失败，已继续完成账号登录: ${errorMessage(aceError)}`);
             }
+        }
+        if (revision !== connectionRevision || socket !== ws) return;
+        if (aceReady) startAceRuntime(sendMsgAsync);
+
+        reconnectAttempt = 0;
+        startHeartbeat();
+        setConnectionPhase('ready', '登录认证完成');
+        if (onLoginSuccess) {
+            Promise.resolve(onLoginSuccess()).catch((error: unknown) => {
+                logWarn('系统', `登录后初始化失败: ${errorMessage(error)}`, {
+                    module: 'system', event: 'login_initialization', result: 'error',
+                });
+            });
+        }
+    } catch (error) {
+        if (revision !== connectionRevision || socket !== ws) return;
+        const message = errorMessage(error);
+        logWarn('登录', `失败: ${message}`, {
+            module: 'network', event: 'login_failed', result: 'error', phase: 'authenticating',
+        });
+        if (error instanceof GatewayError) {
+            log('系统', '账号验证失败，即将停止运行...');
+            networkScheduler.setTimeoutTask('login_error_exit', 1000, () => process.exit(0));
             return;
         }
-        try {
-            const reply = decodeMessage('LoginReply', toBuffer(bodyBytes));
-            applyServerVersionInfo(reply.version_info);
-            const basic = asRecord(reply.basic);
-            if (Object.keys(basic).length > 0) {
-                clearWsErrorState();
-                userState.gid = toNum(basic.gid);
-                userState.name = String(basic.name || '未知');
-                userState.level = toNum(basic.level);
-                userState.gold = toNum(basic.gold);
-                userState.exp = toNum(basic.exp);
-
-                // 更新状态栏
-                updateStatusFromLogin({
-                    name: userState.name,
-                    level: userState.level,
-                    gold: userState.gold,
-                    exp: userState.exp,
-                });
-
-                log('系统', `登录成功: ${userState.name} (Lv${userState.level})`);
-
-                console.warn('');
-                console.warn('========== 登录成功 ==========');
-                console.warn(`  GID:    ${userState.gid}`);
-                console.warn(`  昵称:   ${userState.name}`);
-                console.warn(`  等级:   ${userState.level}`);
-                console.warn(`  金币:   ${userState.gold}`);
-                if (reply.time_now_millis) {
-                    syncServerTime(toNum(reply.time_now_millis));
-                    console.warn(`  时间:   ${new Date(toNum(reply.time_now_millis)).toLocaleString()}`);
-                }
-                console.warn('===============================');
-                console.warn('');
-
-                // ACE 反作弊：绑定失败不能阻断已经成功的游戏登录。
-                userState.openid = String(basic.open_id || '').trim();
-                let aceReady = true;
-                if (userState.openid) {
-                    try {
-                        await cryptoWasm.bindUser(userState.openid);
-                        const initTokenLength = gatewayTokens.stageInitToken(cryptoWasm.getEncryptedInitInfo());
-                        if (initTokenLength > 0) {
-                            log('ACE', `TSDK 初始化凭据已就绪: ${initTokenLength} 字符，将随下一条请求发送`);
-                        }
-                    } catch (aceError) {
-                        aceReady = false;
-                        gatewayTokens.clear();
-                        logWarn('ACE', `TSDK 用户绑定失败，已继续完成账号登录: ${errorMessage(aceError)}`);
-                    }
-                }
-                if (aceReady) startAceRuntime(sendMsgAsync);
-
-            }
-
-            startHeartbeat();
-            if (onLoginSuccess) onLoginSuccess();
-        } catch (e) {
-            log('登录', `解码失败: ${errorMessage(e)}`);
-        }
-    });
+        recoverConnection(`登录失败: ${message}`);
+    }
 }
 
 // ============ 心跳 ============
@@ -803,7 +867,7 @@ function startHeartbeat(): void {
                 logWarn('心跳', `心跳未响应 (${heartbeatMissCount}/${MAX_HEARTBEAT_MISSES})，${Math.round(inboundSilenceMs / 1000)}s 无入站消息 (${requestPressureDetails()})`);
                 if (shouldReconnectForHeartbeat(heartbeatMissCount, inboundSilenceMs)) {
                     logWarn('心跳', '连续心跳超时且连接无入站数据，开始重连');
-                    reconnect(null);
+                    recoverConnection('连续心跳超时');
                 }
             }
         }).finally(() => {
@@ -813,31 +877,72 @@ function startHeartbeat(): void {
 }
 
 // ============ WebSocket 连接 ============
-let savedLoginCallback: (() => void) | null = null;
+let savedLoginCallback: LoginSuccessCallback | null = null;
 let savedCode: string | null = null;
 // 连接被拒（code 过期）时跳过自动重连，等待 worker 刷新 code 后手动重连
 let skipAutoReconnect = false;
 
-function connect(code: unknown, onLoginSuccess: (() => void) | null = null): void {
+function scheduleReconnect(reason: string): void {
+    if (!savedCode) return;
+    reconnectAttempt += 1;
+    const delayMs = computeReconnectDelayMs(reconnectAttempt);
+    setConnectionPhase('backoff', `${reason}，${Math.ceil(delayMs / 1000)} 秒后重试`);
+    networkScheduler.setTimeoutTask('auto_reconnect', delayMs, () => {
+        log('系统', `[WS] 尝试自动重连（第 ${reconnectAttempt} 次）...`, {
+            module: 'network', event: 'auto_reconnect', result: 'attempt', reconnectAttempt,
+        });
+        reconnect(null);
+    });
+}
+
+function closeCurrentSocket(): void {
+    const socket = ws;
+    ws = null;
+    if (!socket) return;
+    socket.removeAllListeners();
+    try { socket.close(); } catch { }
+}
+
+function recoverConnection(reason: string): void {
+    cleanup(reason);
+    closeCurrentSocket();
+    scheduleReconnect(reason);
+}
+
+function connect(code: unknown, onLoginSuccess: LoginSuccessCallback | null = null): void {
     connectionRevision += 1;
     const revision = connectionRevision;
     savedLoginCallback = onLoginSuccess || null;
     if (code) savedCode = String(code);
+    resetConnectionProtocolState();
+    userState.gid = 0;
+    setConnectionPhase('connecting', '建立 WebSocket');
     const url = `${CONFIG.serverUrl}?platform=${CONFIG.platform}&os=${CONFIG.os}&ver=${getClientVersion()}&code=${savedCode}&openID=`;
 
-    const socket = new WebSocket(url, {
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13)',
-            'Origin': 'https://gate-obt.nqf.qq.com',
-        },
-    });
+    let socket: WebSocketLike;
+    try {
+        socket = new WebSocket(url, {
+            handshakeTimeout: WS_HANDSHAKE_TIMEOUT_MS,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x6700143B) NetType/WIFI MiniProgramEnv/Windows WindowsWechat/WMPF WindowsWechat(0x63090a13)',
+                'Origin': 'https://gate-obt.nqf.qq.com',
+            },
+        });
+    } catch (error) {
+        const message = errorMessage(error);
+        setConnectionPhase('disconnected', `创建连接失败: ${message}`);
+        scheduleReconnect(`创建连接失败: ${message}`);
+        return;
+    }
 
     ws = socket;
     socket.binaryType = 'arraybuffer';
 
     socket.on('open', () => {
         if (revision !== connectionRevision || socket !== ws) return;
-        sendLogin(onLoginSuccess);
+        lastInboundAt = Date.now();
+        setConnectionPhase('authenticating', 'WebSocket 已连接');
+        void sendLogin(revision, socket, onLoginSuccess);
     });
 
     socket.on('message', (data: RawData) => {
@@ -848,19 +953,15 @@ function connect(code: unknown, onLoginSuccess: (() => void) | null = null): voi
     socket.on('close', (code: number, _reason: Buffer) => {
         if (revision !== connectionRevision || socket !== ws) return;
         console.warn(`[WS] 连接关闭 (code=${code})`);
-        cleanup();
+        cleanup(`连接关闭 code=${code}`);
+        if (ws === socket) ws = null;
         // 连接被拒（400，code 过期）：跳过自动重连，等 worker 刷新 code 后手动重连
         if (skipAutoReconnect) {
             skipAutoReconnect = false;
+            setConnectionPhase('reauth-required', '登录 Code 已失效');
             return;
         }
-        // 自动重连：延迟 2s 后重试，复用已保存的登录回调
-        if (savedLoginCallback) {
-            networkScheduler.setTimeoutTask('auto_reconnect', 2000, () => {
-                log('系统', '[WS] 尝试自动重连...');
-                reconnect(null);
-            });
-        }
+        scheduleReconnect(`连接关闭 code=${code}`);
     });
 
     socket.on('error', (err: Error) => {
@@ -877,9 +978,14 @@ function connect(code: unknown, onLoginSuccess: (() => void) | null = null): voi
                 if (code === 400) {
                     skipAutoReconnect = true;
                     networkEvents.emit('ws_code_rejected');
+                    cleanup('登录 Code 已失效');
+                    closeCurrentSocket();
+                    setConnectionPhase('reauth-required', '登录 Code 已失效');
+                    return;
                 }
             }
         }
+        recoverConnection(`WebSocket 错误: ${message || '未知错误'}`);
     });
 }
 
@@ -887,35 +993,33 @@ function cleanup(reason = '网络清理'): void {
     connectionRevision += 1;
     heartbeatInFlight = false;
     heartbeatMissCount = 0;
+    userState.gid = 0;
     gatewayTokens.clear();
     rejectAllPendingRequests(`请求已中断: ${reason}`);
     networkScheduler.clearAll();
     stopAceRuntime(true);
-    // pendingCallbacks.clear();
+    setConnectionPhase('disconnected', reason);
 }
 
 function reconnect(newCode: unknown): void {
     cleanup('主动重连');
-    if (ws) {
-        ws.removeAllListeners();
-        ws.close();
-        ws = null;
-    }
-    userState.gid = 0;
+    closeCurrentSocket();
+    skipAutoReconnect = false;
     connect(newCode || savedCode, savedLoginCallback);
 }
 
 function getWs(): WebSocketLike | null { return ws; }
+function getConnectionState(): ConnectionStateSnapshot { return { ...connectionState }; }
 
 export {
     cleanup,
     connect,
     GatewayError,
+    getConnectionState,
     getUserState,
     getWs,
     getWsErrorState,
     networkEvents,
     reconnect,
-    sendMsg,
     sendMsgAsync,
 };

@@ -28,6 +28,7 @@ type MiniProgramStatus =
     | { status: 'OK'; ticket: unknown; uin: unknown; nickname: string };
 
 const ChromeUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const QR_HTTP_TIMEOUT_MS = 15_000;
 
 class QRLoginSession {
     static Presets: Record<string, QrLoginPreset> = {
@@ -73,6 +74,7 @@ class QRLoginSession {
 
         try {
             const response = await axios.get(url, {
+                timeout: QR_HTTP_TIMEOUT_MS,
                 responseType: 'arraybuffer',
                 headers: {
                     'Referer': config.referrer || `https://xui.ptlogin2.qq.com/`,
@@ -118,6 +120,7 @@ class QRLoginSession {
 
         try {
             const response = await axios.get(api, {
+                timeout: QR_HTTP_TIMEOUT_MS,
                 headers: {
                     'Cookie': `qrsig=${qrsig}`,
                     'Referer': config.referrer || 'https://xui.ptlogin2.qq.com/',
@@ -179,6 +182,7 @@ class MiniProgramLoginSession {
     static async requestLoginCode(): Promise<{ code: string; url: string; image: string }> {
         try {
             const response = await axios.get('https://q.qq.com/ide/devtoolAuth/GetLoginCode', {
+                timeout: QR_HTTP_TIMEOUT_MS,
                 headers: this.getHeaders()
             });
 
@@ -212,6 +216,7 @@ class MiniProgramLoginSession {
     static async queryStatus(code: unknown): Promise<MiniProgramStatus> {
         try {
             const response = await axios.get(`https://q.qq.com/ide/devtoolAuth/syncScanSateGetTicket?code=${code}`, {
+                timeout: QR_HTTP_TIMEOUT_MS,
                 headers: this.getHeaders()
             });
 
@@ -244,6 +249,7 @@ class MiniProgramLoginSession {
                 appid,
                 ticket
             }, {
+                timeout: QR_HTTP_TIMEOUT_MS,
                 headers: this.getHeaders()
             });
 

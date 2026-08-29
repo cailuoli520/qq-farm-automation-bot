@@ -1,4 +1,4 @@
-export type FriendTaskOwner = 'patrol' | 'daily-bad' | 'rain-poetry';
+export type FriendTaskOwner = 'patrol' | 'daily-bad' | 'rain-poetry' | 'manual-rain';
 
 export interface FriendTaskLease {
     owner: FriendTaskOwner;
@@ -23,6 +23,21 @@ export function tryAcquireFriendTask(owner: FriendTaskOwner): FriendTaskLease | 
             if (activeOwner === owner) activeOwner = null;
         },
     };
+}
+
+export async function waitForFriendTaskLease(
+    owner: FriendTaskOwner,
+    maxWaitMs = 10000,
+    pollMs = 250,
+): Promise<FriendTaskLease | null> {
+    const deadline = Date.now() + Math.max(0, maxWaitMs);
+    while (true) {
+        const lease = tryAcquireFriendTask(owner);
+        if (lease) return lease;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return null;
+        await new Promise<void>(resolve => setTimeout(resolve, Math.min(Math.max(1, pollMs), remaining)));
+    }
 }
 
 export function resetFriendTaskCoordinator(): void {

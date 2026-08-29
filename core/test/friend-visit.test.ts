@@ -6,9 +6,16 @@ const {
     withFriendVisit,
 } = require('../src/services/friend-visit');
 const {
+    getActiveFriendTaskOwner,
     resetFriendTaskCoordinator,
     tryAcquireFriendTask,
+    waitForFriendTaskLease,
 } = require('../src/services/friend-task-coordinator');
+const {
+    clearFriendWeatherCache,
+    getCachedFriendWeather,
+    recordFriendWeatherVisit,
+} = require('../src/services/friend-weather-cache');
 
 test('好友访问会话在处理失败时仍离开农场', async () => {
     const calls: string[] = [];
@@ -109,4 +116,47 @@ test('好友任务协调器互斥并允许幂等释放', () => {
     const rain = tryAcquireFriendTask('rain-poetry');
     assert.ok(rain);
     rain.release();
+});
+
+test('手动天气任务等待自动好友任务释放后再取得访问权', async () => {
+    resetFriendTaskCoordinator();
+    const patrol = tryAcquireFriendTask('patrol');
+    assert.ok(patrol);
+    setTimeout(() => patrol.release(), 10);
+    const manual = await waitForFriendTaskLease('manual-rain', 100, 2);
+    assert.ok(manual);
+    assert.equal(getActiveFriendTaskOwner(), 'manual-rain');
+    manual.release();
+});
+
+test('好友天气缓存记录访问信息并在十分钟后过期', () => {
+    clearFriendWeatherCache();
+    const observed = recordFriendWeatherVisit({
+        source: 'patrol',
+        friendGid: '123',
+        friendName: '好友甲',
+        enterReply: {
+            basic: { gid: 123, name: '好友甲', avatar_url: 'avatar' },
+            weather_status: { active: true, weather_type: 2 },
+            brief_dog_info: { dog_id: 90021 },
+        },
+    }, 1000);
+    assert.equal(observed?.host.name, '好友甲');
+    assert.equal(observed?.pet?.id, '90021');
+    assert.equal(getCachedFriendWeather('123', 1000 + 599999)?.inspectedAt, 1000);
+    assert.equal(getCachedFriendWeather('123', 1000 + 600001), null);
+});
+
+test('普通天气也写入缓存，避免下一轮重复访问好友', () => {
+    clearFriendWeatherCache();
+    const observed = recordFriendWeatherVisit({
+        source: 'patrol',
+        friendGid: '8899',
+        friendName: '普通天气好友',
+        enterReply: { basic: { gid: 8899, name: '普通天气好友' } },
+    }, 2000);
+
+    assert.equal(observed?.gid, '8899');
+    assert.deepEqual(observed?.weatherStatus, {});
+    assert.equal(getCachedFriendWeather('8899', 2001)?.inspectedAt, 2000);
 });

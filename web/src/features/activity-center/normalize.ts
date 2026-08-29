@@ -567,6 +567,11 @@ export function normalizeRainWeatherCheck(value: unknown): RainWeatherCheckDto |
   return {
     host: { gid: text(host.gid), name: text(host.name), avatarUrl: text(host.avatarUrl, host.avatar_url), isSelf: bool(host.isSelf, host.is_self) },
     weather: normalizeRainWeather(value.weather),
+    cached: bool(value.cached),
+    inspectedAt: toMilliseconds(first(value.inspectedAt, value.inspected_at)),
+    pet: isRecord(value.pet)
+      ? { id: text(value.pet.id), name: text(value.pet.name), image: text(value.pet.image) }
+      : null,
   }
 }
 

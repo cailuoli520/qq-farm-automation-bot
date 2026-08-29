@@ -28,6 +28,7 @@ function createHarness(overrides = {}) {
     const logs = [];
     let active = true;
     let enabled = true;
+    let connectionReady = true;
     let automation = {
         mystery_shop_buy: true,
         mystery_shop_allow_gold: true,
@@ -56,6 +57,7 @@ function createHarness(overrides = {}) {
         events,
         getAutomation: () => ({ ...automation, mystery_shop_buy: enabled }),
         getCurrencyBalance: () => '100000',
+        isConnectionReady: () => connectionReady,
         isLifecycleActive: () => active,
         log: (tag, message, meta) => logs.push({ tag, message, meta }),
         now: () => 1786870000 * 1000,
@@ -68,6 +70,7 @@ function createHarness(overrides = {}) {
         runtime,
         buyCalls: () => buyCalls,
         setActive(value) { active = value; },
+        setConnectionReady(value) { connectionReady = value; },
         setEnabled(value) { enabled = value; },
         setAutomation(value) { automation = { ...automation, ...value }; },
     };
@@ -98,6 +101,26 @@ test('神秘商人推送监听只注册一次，并合并同一商品的突发�
 
     assert.equal((await harness.runtime.handleOffer(harness.offer)).outcome, 'duplicate');
     assert.equal(harness.logs.length, 1);
+});
+
+test('断线暂停神秘商人监听，重登后恢复且不会重复注册', async (t) => {
+    const harness = createHarness();
+    t.after(() => harness.runtime.stop());
+    harness.runtime.start();
+    assert.equal(harness.events.listenerCount('mysteryShopNotify'), 1);
+
+    harness.setConnectionReady(false);
+    harness.runtime.pause();
+    assert.equal(harness.events.listenerCount('mysteryShopNotify'), 0);
+    assert.equal((await harness.runtime.checkNow()).outcome, 'stopped');
+    assert.equal(harness.buyCalls(), 0);
+
+    harness.setConnectionReady(true);
+    harness.runtime.resume();
+    harness.runtime.resume();
+    assert.equal(harness.events.listenerCount('mysteryShopNotify'), 1);
+    assert.equal((await harness.runtime.checkNow()).outcome, 'purchased');
+    assert.equal(harness.buyCalls(), 1);
 });
 
 test('自动购买关闭时忽略推送，开启后立即查询并购买', async (t) => {

@@ -421,17 +421,21 @@ export const useActivityCenterStore = defineStore('activity-center', () => {
     notice.value = ''
   }
 
-  async function checkRainWeather(accountId: string, friendGid: string) {
+  async function checkRainWeather(
+    accountId: string,
+    friendGid: string,
+    options: { cacheOnly?: boolean, forceRefresh?: boolean } = {},
+  ) {
     const version = ++rainWeatherRequestVersion
     rainWeatherLoading.value = true
     rainWeatherError.value = ''
     rainWeatherCheck.value = null
     try {
-      const result = normalizeRainWeatherCheck(await fetchRainWeatherRequest(accountId, friendGid))
+      const result = normalizeRainWeatherCheck(await fetchRainWeatherRequest(accountId, friendGid, options))
       if (version !== rainWeatherRequestVersion)
         return false
       rainWeatherCheck.value = result
-      if (!result)
+      if (!result && !options.cacheOnly)
         rainWeatherError.value = '未能读取好友天气'
       return !!result
     }

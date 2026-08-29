@@ -3,6 +3,12 @@ import type { LogEntry, RuntimeConfigSnapshot, RuntimeStatusSnapshot } from './d
 export type WorkerApiMethod = string;
 export type WxCredentialAction = 'refresh_code' | 'keepalive';
 
+export interface WorkerApiErrorPayload {
+    message: string;
+    code?: string;
+    retryAfterMs?: number;
+}
+
 export type MasterToWorkerMessage =
     | { type: 'ping' }
     | { type: 'start'; config: { code?: string; platform?: string } }
@@ -23,7 +29,7 @@ export type WorkerToMasterMessage =
     | { type: 'account_kicked'; reason: string }
     | { type: 'version_prefix_update'; prefix: string }
     | { type: 'push_notify'; title: string; content: string }
-    | { type: 'api_response'; id: number; result?: unknown; error?: string }
+    | { type: 'api_response'; id: number; result?: unknown; error?: string | WorkerApiErrorPayload }
     | { type: 'friend_blacklist_add'; gid: number; friendName?: string; reason?: string };
 
 export type WorkerChannelMessage = MasterToWorkerMessage | WorkerToMasterMessage;

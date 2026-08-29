@@ -2,7 +2,7 @@
  * 分享奖励
  */
 
-import { sendMsg, sendMsgAsync } from '../utils/network';
+import { sendMsgAsync } from '../utils/network';
 import { types } from '../utils/proto';
 import { log } from '../utils/utils';
 import {
@@ -52,8 +52,7 @@ async function reportShare() {
 
 async function reportActivityShare(source: unknown, scene: unknown): Promise<void> {
     const body = types.ReportShareRequest.encode(types.ReportShareRequest.create({ source, scene })).finish();
-    const sent = await sendMsg('gamepb.sharepb.ShareService', 'ReportShare', body);
-    if (!sent) throw new Error('活动分享上报发送失败');
+    await sendMsgAsync('gamepb.sharepb.ShareService', 'ReportShare', body);
 }
 
 async function claimShareReward() {

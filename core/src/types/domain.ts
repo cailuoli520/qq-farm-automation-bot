@@ -72,6 +72,7 @@ export interface WorkerRecord {
     nick?: string;
     stopping: boolean;
     disconnectedSince: number;
+    connectionStallSince: number;
     autoDeleteTriggered: boolean;
     wsError: { code: number; message: string; at: number } | null;
 }
